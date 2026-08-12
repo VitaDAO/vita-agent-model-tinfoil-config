@@ -1,69 +1,104 @@
-# Tinfoil Container Configuration — vita-agent-model
+# Tinfoil Container Configuration — vita-agent-model (SGLang / FP8)
 #
-# Serves DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
-# on the control.inf6 H200 via llama.cpp, using the MTP-Q8_0 quant (30.2 GB).
+# Replaces the llama.cpp + GGUF deployment, which measured 97.7 tok/s — only
+# ~1.19 TB/s of weight traffic against the H200's ~4.8 TB/s, i.e. ~25% of the
+# card. At 25% utilisation the limiter is per-token overhead, not bandwidth,
+# so a smaller quant would not have helped; the runtime had to change.
 #
-# Runtime choice: the wrapped artifact is GGUF, which SGLang cannot load and
-# vLLM's GGUF path does not cover for this hybrid Gated-DeltaNet arch. llama.cpp
-# is the only runtime that reads it. See tinfoil-config.sglang.yml for the
-# higher-concurrency variant, which needs the BF16 safetensors wrapped instead.
+# FP8 over BF16 deliberately: BF16 is 55.6 GB, nearly double the 30.2 GB of
+# bytes-per-token we already serve, giving it a *lower* ceiling than the GGUF
+# it would replace. This FP8 build is 36.8 GB and runs on the H200's native
+# FP8 tensor cores.
 #
-# CONCURRENCY LIMIT: llama.cpp's MTP implementation (ggml-org/llama.cpp#22673)
-# only supports a single server slot, hence -np 1. This endpoint serves one
-# request at a time. Dropping --spec-type/--spec-draft-n-max allows raising -np,
-# at the cost of the MTP speedup.
+# Quantisation is block-wise e4m3 (weight_block_size [128,128], dynamic
+# activations). The Gated-DeltaNet linear_attn conv1d/in_proj tensors are in
+# modules_to_not_convert, so the sensitive state-space path stays high
+# precision. All 15 mtp.* tensors survive the conversion, which is what keeps
+# NEXTN speculative decoding available.
 
 cvm-version: 0.7.5
 cpus: 8
-memory: 524288
+# Host RAM, not VRAM — weights and KV live on the GPU. See the llama.cpp config
+# for the derivation; real need is ~16-32 GB, this is headroom.
+memory: 65536
 gpus: 1
 
 models:
-  - name: "fable-fusion-711-gguf"
-    repo: "DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF@bca057c5733a1a9ad5d99ce7362d620883537069"
-    mpk: "da73863f4f3fcb4ecfb5fe3acf56bf6f0e5db6ba21c7a9da6ca7629e521fa7ba_465146941440_819dfb68-8580-5ce9-89ff-a168b84a8b9c"
+  - name: "qwen3-6-27b-fable-fusion-711-fp8"
+    repo: "xzanomad/Qwen3.6-27B-Fable-Fusion-711-FP8@ff8f3b38c46ffbbb1c0b2b34bb02e2783b41c65a"
+    mpk: "84718781d85366d862837feb4f049f295ce2a0cea0dcb003a92f841d713c6c34_36795064320_1617f750-244a-5b62-8638-dd5fd162da21"
 
 containers:
-  - name: llamacpp
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:a50b12bb92de0253d2737824ca1887f410e07b4dd3e3028f74a5a0a67c789e4b
+  - name: sglang
+    image: lmsysorg/sglang:v0.5.14-cu129@sha256:885da20811baa77e1c680cad0511d50efbaf94ebe43def9182bdf5290f47dbc5
     runtime: nvidia
     gpus: all
     ipc: host
     restart: always
+    env:
+      - HF_HUB_OFFLINE: '1'
+      - TRANSFORMERS_OFFLINE: '1'
+      - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      - SGLANG_ENABLE_SPEC_V2: '1'
     command:
-      # The wrap contains all 24 quants (465 GB); select one explicitly.
+      - python3
       - -m
-      - /tinfoil/mpk/mpk-da73863f4f3fcb4ecfb5fe3acf56bf6f0e5db6ba21c7a9da6ca7629e521fa7ba/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q8_0.gguf
-      - -a
+      - sglang.launch_server
+      - --model-path
+      - /tinfoil/mpk/mpk-84718781d85366d862837feb4f049f295ce2a0cea0dcb003a92f841d713c6c34
+      # Unchanged from the llama.cpp deployment so callers need no edits.
+      - --served-model-name
       - fable-711
-      - -ngl
-      - all
-      # 256k native. KV is ~64 KB/token (16 of 64 layers are full-attention,
-      # 4 KV heads x 256 head_dim), so a full 262144 slot costs ~17 GB.
-      # 30.2 GB weights + ~17 GB KV sits well inside the H200's 141 GB.
-      - -c
-      - '262144'
-      - -np
-      - '1'
-      # MTP speculative decoding off the quant's embedded MTP tensors.
-      - --spec-type
-      - draft-mtp
-      - --spec-draft-n-max
+      - --quantization
+      - fp8
+      - --reasoning-parser
+      - qwen3
+      - --tool-call-parser
+      - qwen3_coder
+      # MTP off the model's own 15 mtp.* tensors. eagle-topk MUST stay 1.
+      # Author's constraint: temperature <= 1.0 and repetition_penalty 1.0,
+      # or draft acceptance collapses. llama.cpp measured 49.6% acceptance
+      # (71.3/46.8/30.3% by position) — compare against that here.
+      - --speculative-algorithm
+      - NEXTN
+      - --speculative-num-steps
       - '3'
-      # Puts thinking in message.reasoning_content, matching SGLang's
-      # --reasoning-parser qwen3, so callers survive a runtime swap unchanged.
-      - --reasoning-format
-      - deepseek
-      - --jinja
-      # Text-only endpoint; keeps llama-server off the mmproj-*.gguf files
-      # that sit alongside the weights in the same wrap.
-      - --no-mmproj
-      - -fa
-      # Quoted: bare `on` is a YAML 1.1 boolean, which would emit a non-string arg.
-      - 'on'
-      # Exposes draft-acceptance counters. Author's rule: below ~50% acceptance,
-      # the non-MTP quants are faster, so this is the knob worth watching.
-      - --metrics
+      - --speculative-eagle-topk
+      - '1'
+      - --speculative-num-draft-tokens
+      - '4'
+      # Hybrid Gated-DeltaNet state cache; this arch is on SGLang's
+      # extra_buffer allowlist (srt/arg_groups/overrides.py).
+      - --mamba-scheduler-strategy
+      - extra_buffer
+      - --mamba-full-memory-ratio
+      - '0.2'
+      - --mamba-ssm-dtype
+      - bfloat16
+      # SGLang's tuned attention-backend override is is_sm100_supported()-gated
+      # (Blackwell). The H200 is sm90, so it never fires — pin fa3 explicitly.
+      - --attention-backend
+      - fa3
+      - --page-size
+      - '64'
+      - --mem-fraction-static
+      - '0.85'
+      - --context-length
+      - '262144'
+      - --chunked-prefill-size
+      - '4096'
+      # The other half of the fix: llama.cpp's MTP is capped at one slot.
+      - --max-running-requests
+      - '16'
+      - --cuda-graph-max-bs
+      - '16'
+      - --watchdog-timeout
+      - '600'
+      - --soft-watchdog-timeout
+      - '300'
+      - --enable-metrics
+      - --log-level
+      - warning
       - --host
       - 127.0.0.1
       - --port
@@ -72,10 +107,10 @@ containers:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
-      # First boot verifies the 465 GB package through dm-verity.
+      # 36.8 GB to verify vs 465 GB for the GGUF wrap, so boot should beat
+      # the ~16 min the llama.cpp deployment took.
       start_period: 60m
 
-# Fronts llama.cpp's OpenAI-compatible API over attested HTTPS.
 shim:
   upstream-port: 8080
   paths:

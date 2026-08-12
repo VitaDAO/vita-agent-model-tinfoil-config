@@ -1,27 +1,32 @@
-# Tinfoil Container Configuration — vita-agent-model
+# Tinfoil Container Configuration — vita-agent-model (SGLang / FP8)
 #
-# Serves DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-MTP
-# (BF16 safetensors, 55.6 GB, 13 shards) on the control.inf6 H200 via SGLang.
+# Replaces the llama.cpp + GGUF deployment, which measured 97.7 tok/s — only
+# ~1.19 TB/s of weight traffic against the H200's ~4.8 TB/s, i.e. ~25% of the
+# card. At 25% utilisation the limiter is per-token overhead, not bandwidth,
+# so a smaller quant would not have helped; the runtime had to change.
 #
-# Why safetensors and not the -GGUF repo: SGLang cannot load GGUF, and vLLM's
-# GGUF path does not cover this hybrid Gated-DeltaNet arch. The GGUF repo also
-# wraps to 465 GB (all 24 quants) vs 55.6 GB here. llama.cpp could serve the
-# GGUF, but its MTP implementation is pinned to n_parallel=1 (one concurrent
-# request), which is unacceptable for a shared enclave.
+# FP8 over BF16 deliberately: BF16 is 55.6 GB, nearly double the 30.2 GB of
+# bytes-per-token we already serve, giving it a *lower* ceiling than the GGUF
+# it would replace. This FP8 build is 36.8 GB and runs on the H200's native
+# FP8 tensor cores.
 #
-# Arch: Qwen3_5ForConditionalGeneration (dense, 27B, 64 layers, head_dim 256,
-# full_attention_interval 4). 1199 tensors, of which 15 are `mtp.*` — the MTP
-# head is present, so SGLang's NEXTN speculative decoding is available.
+# Quantisation is block-wise e4m3 (weight_block_size [128,128], dynamic
+# activations). The Gated-DeltaNet linear_attn conv1d/in_proj tensors are in
+# modules_to_not_convert, so the sensitive state-space path stays high
+# precision. All 15 mtp.* tensors survive the conversion, which is what keeps
+# NEXTN speculative decoding available.
 
 cvm-version: 0.7.5
 cpus: 8
-memory: 524288
+# Host RAM, not VRAM — weights and KV live on the GPU. See the llama.cpp config
+# for the derivation; real need is ~16-32 GB, this is headroom.
+memory: 65536
 gpus: 1
 
 models:
-  - name: "fable-fusion-711"
-    repo: "DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-MTP@5fdc5e470727b73374e6cb3d673b5e3aaa52bd14"
-    mpk: "REPLACE_ME_MPK"
+  - name: "qwen3-6-27b-fable-fusion-711-fp8"
+    repo: "xzanomad/Qwen3.6-27B-Fable-Fusion-711-FP8@ff8f3b38c46ffbbb1c0b2b34bb02e2783b41c65a"
+    mpk: "84718781d85366d862837feb4f049f295ce2a0cea0dcb003a92f841d713c6c34_36795064320_1617f750-244a-5b62-8638-dd5fd162da21"
 
 containers:
   - name: sglang
@@ -40,17 +45,20 @@ containers:
       - -m
       - sglang.launch_server
       - --model-path
-      - /tinfoil/mpk/mpk-REPLACE_ME_ROOT_HASH
+      - /tinfoil/mpk/mpk-84718781d85366d862837feb4f049f295ce2a0cea0dcb003a92f841d713c6c34
+      # Unchanged from the llama.cpp deployment so callers need no edits.
       - --served-model-name
       - fable-711
-      # Qwen3.6 thinking traces + Qwen XML tool-call format.
+      - --quantization
+      - fp8
       - --reasoning-parser
       - qwen3
       - --tool-call-parser
       - qwen3_coder
-      # MTP speculative decoding off the model's own 15 mtp.* tensors.
-      # eagle-topk MUST stay 1. Author's guidance: keep temp <= 1.0 and
-      # repetition_penalty at 1.0 or draft acceptance collapses.
+      # MTP off the model's own 15 mtp.* tensors. eagle-topk MUST stay 1.
+      # Author's constraint: temperature <= 1.0 and repetition_penalty 1.0,
+      # or draft acceptance collapses. llama.cpp measured 49.6% acceptance
+      # (71.3/46.8/30.3% by position) — compare against that here.
       - --speculative-algorithm
       - NEXTN
       - --speculative-num-steps
@@ -59,7 +67,7 @@ containers:
       - '1'
       - --speculative-num-draft-tokens
       - '4'
-      # Hybrid Gated-DeltaNet state cache. This arch is on SGLang's
+      # Hybrid Gated-DeltaNet state cache; this arch is on SGLang's
       # extra_buffer allowlist (srt/arg_groups/overrides.py).
       - --mamba-scheduler-strategy
       - extra_buffer
@@ -67,18 +75,19 @@ containers:
       - '0.2'
       - --mamba-ssm-dtype
       - bfloat16
-      # H200 is sm90, so SGLang's sm100 auto-override does not fire — pin fa3.
+      # SGLang's tuned attention-backend override is is_sm100_supported()-gated
+      # (Blackwell). The H200 is sm90, so it never fires — pin fa3 explicitly.
       - --attention-backend
       - fa3
       - --page-size
       - '64'
-      # 55.6 GB of weights on a 141 GB H200 leaves ample KV headroom.
       - --mem-fraction-static
       - '0.85'
       - --context-length
       - '262144'
       - --chunked-prefill-size
       - '4096'
+      # The other half of the fix: llama.cpp's MTP is capped at one slot.
       - --max-running-requests
       - '16'
       - --cuda-graph-max-bs
@@ -98,14 +107,15 @@ containers:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
-      # First boot verifies 55.6 GB through dm-verity and captures CUDA graphs.
+      # 36.8 GB to verify vs 465 GB for the GGUF wrap, so boot should beat
+      # the ~16 min the llama.cpp deployment took.
       start_period: 60m
 
-# Fronts SGLang's OpenAI-compatible API. Callers reach these over attested HTTPS.
 shim:
   upstream-port: 8080
   paths:
     - /health
+    - /metrics
     - /v1/models
     - /v1/chat/completions
     - /v1/completions
