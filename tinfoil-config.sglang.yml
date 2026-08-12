@@ -1,0 +1,111 @@
+# Tinfoil Container Configuration — vita-agent-model
+#
+# Serves DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-MTP
+# (BF16 safetensors, 55.6 GB, 13 shards) on the control.inf6 H200 via SGLang.
+#
+# Why safetensors and not the -GGUF repo: SGLang cannot load GGUF, and vLLM's
+# GGUF path does not cover this hybrid Gated-DeltaNet arch. The GGUF repo also
+# wraps to 465 GB (all 24 quants) vs 55.6 GB here. llama.cpp could serve the
+# GGUF, but its MTP implementation is pinned to n_parallel=1 (one concurrent
+# request), which is unacceptable for a shared enclave.
+#
+# Arch: Qwen3_5ForConditionalGeneration (dense, 27B, 64 layers, head_dim 256,
+# full_attention_interval 4). 1199 tensors, of which 15 are `mtp.*` — the MTP
+# head is present, so SGLang's NEXTN speculative decoding is available.
+
+cvm-version: 0.7.5
+cpus: 8
+memory: 524288
+gpus: 1
+
+models:
+  - name: "fable-fusion-711"
+    repo: "DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-MTP@5fdc5e470727b73374e6cb3d673b5e3aaa52bd14"
+    mpk: "REPLACE_ME_MPK"
+
+containers:
+  - name: sglang
+    image: lmsysorg/sglang:v0.5.14-cu129@sha256:885da20811baa77e1c680cad0511d50efbaf94ebe43def9182bdf5290f47dbc5
+    runtime: nvidia
+    gpus: all
+    ipc: host
+    restart: always
+    env:
+      - HF_HUB_OFFLINE: '1'
+      - TRANSFORMERS_OFFLINE: '1'
+      - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      - SGLANG_ENABLE_SPEC_V2: '1'
+    command:
+      - python3
+      - -m
+      - sglang.launch_server
+      - --model-path
+      - /tinfoil/mpk/mpk-REPLACE_ME_ROOT_HASH
+      - --served-model-name
+      - fable-711
+      # Qwen3.6 thinking traces + Qwen XML tool-call format.
+      - --reasoning-parser
+      - qwen3
+      - --tool-call-parser
+      - qwen3_coder
+      # MTP speculative decoding off the model's own 15 mtp.* tensors.
+      # eagle-topk MUST stay 1. Author's guidance: keep temp <= 1.0 and
+      # repetition_penalty at 1.0 or draft acceptance collapses.
+      - --speculative-algorithm
+      - NEXTN
+      - --speculative-num-steps
+      - '3'
+      - --speculative-eagle-topk
+      - '1'
+      - --speculative-num-draft-tokens
+      - '4'
+      # Hybrid Gated-DeltaNet state cache. This arch is on SGLang's
+      # extra_buffer allowlist (srt/arg_groups/overrides.py).
+      - --mamba-scheduler-strategy
+      - extra_buffer
+      - --mamba-full-memory-ratio
+      - '0.2'
+      - --mamba-ssm-dtype
+      - bfloat16
+      # H200 is sm90, so SGLang's sm100 auto-override does not fire — pin fa3.
+      - --attention-backend
+      - fa3
+      - --page-size
+      - '64'
+      # 55.6 GB of weights on a 141 GB H200 leaves ample KV headroom.
+      - --mem-fraction-static
+      - '0.85'
+      - --context-length
+      - '262144'
+      - --chunked-prefill-size
+      - '4096'
+      - --max-running-requests
+      - '16'
+      - --cuda-graph-max-bs
+      - '16'
+      - --watchdog-timeout
+      - '600'
+      - --soft-watchdog-timeout
+      - '300'
+      - --enable-metrics
+      - --log-level
+      - warning
+      - --host
+      - 127.0.0.1
+      - --port
+      - '8080'
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      # First boot verifies 55.6 GB through dm-verity and captures CUDA graphs.
+      start_period: 60m
+
+# Fronts SGLang's OpenAI-compatible API. Callers reach these over attested HTTPS.
+shim:
+  upstream-port: 8080
+  paths:
+    - /health
+    - /v1/models
+    - /v1/chat/completions
+    - /v1/completions
