@@ -18,9 +18,11 @@
 
 cvm-version: 0.7.5
 cpus: 8
-# Host RAM, not VRAM — weights and KV live on the GPU. See the llama.cpp config
-# for the derivation; real need is ~16-32 GB, this is headroom.
-memory: 65536
+# Host RAM, not VRAM — weights and KV live on the GPU. SGLang streams the 11
+# FP8 shards (~3.3 GB each) to the device rather than staging all 36.8 GB in
+# RAM, so peak host use is the largest shard plus the torch/CUDA context.
+# 32 GB. Verify against `tinfoil container metrics` once it has served traffic.
+memory: 32768
 gpus: 1
 
 models:
