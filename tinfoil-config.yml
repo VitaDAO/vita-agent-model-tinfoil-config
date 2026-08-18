@@ -1,28 +1,31 @@
-# Tinfoil Container Configuration — vita-agent-model (SGLang / FP8 / DSpark)
+# Tinfoil Container Configuration — vita-agent-model (SGLang v0.5.17 / FP8 / DSpark)
 #
-# Serves the FP8 quant of TeichAI/Qwen3.8-27B-Fable-Distill with the DSpark
-# speculative drafter RadixArk/Qwen3.8-27B-DSpark (2.72 GB BF16, trained with
-# SpecForge against Qwen/Qwen3.8-27B-FP8; published acceptance 3.39 mean over
-# 1,164 requests). Replaces native NEXTN MTP, which measured acceptance 2.2 and
-# 141.7 tok/s here. This deployment is per-step-overhead bound (141.7 tok/s =
-# only 41% of the H200's HBM bandwidth), so acceptance converts nearly linearly
-# into tok/s: 2.2 -> 3.4 would be ~+50%.
+# MINIMAL DELTA from the proven v0.6.1 config: image bump (DSpark needs v0.5.17),
+# the drafter as a second artifact, NEXTN->DSPARK, --trust-remote-code, and
+# concurrency 4 (DSpark scratch = mrr x 8 x 144 MiB). Every other flag, including
+# names the v0.9.0 attempt renamed, is left EXACTLY as in the config that boots.
 #
-# CAVEAT: the drafter was trained against STOCK Qwen3.8-27B, and the Fable
-# distill moved the residual stream at its aux capture layers [4,16,28,40,52].
-# Judge on meta_info.spec_accept_length (per-request, NOT the /metrics gauge,
-# which resets every 40 decode iterations): >=3.0 keep, 2.5-3.0 marginal,
-# <2.5 revert to tinfoil-config.nextn.yml (= tag v0.6.1).
+# SGLang deployment of TeichAI/Qwen3.8-27B-Fable-Distill (BF16 safetensors,
+# ~55 GB). Replaces the llama.cpp + GGUF v0.3.0 deployment, which measured
+# 72.7 tok/s — ~1.9 TB/s of weight traffic against the H200's ~4.8 TB/s
+# (~39% of the card), limited by llama.cpp per-token overhead and its
+# single-slot MTP. SGLang runs NEXTN speculative decoding with real
+# concurrency and proper kernels for this hybrid Gated-DeltaNet arch.
 #
-# SGLang v0.5.17 is MANDATORY here: v0.5.16's DSpark verify path has no
-# Gated-DeltaNet state commit, which silently corrupts state on this
-# 48-GDN-layer target — wrong tokens, no crash, healthy-looking acceptance.
+# BF16 deliberately: no FP8 checkpoint of this distill exists yet, and an
+# on-the-fly quant would not protect the sensitive linear_attn conv1d/in_proj
+# tensors the way the old Fusion FP8's modules_to_not_convert did. If a
+# careful block-wise FP8 appears, it halves bytes-per-token again.
+#
 
 cvm-version: 0.7.5
 cpus: 8
-# Enclave RAM must hold both dm-verity model artifacts (28.8 + 2.5 GiB) AND the
-# extracted container image (~35 GB): enclaves are diskless and containerd runs
-# on a RAM-disk. 65536 is measured to fail during image extract.
+# The model package must fit in enclave RAM: the dm-verity artifact at
+# /tinfoil/mpk is memory-backed, so `memory` has to exceed the mpk size, not
+# merely the runtime's working set — AND the containerd ramdisk holding the
+# pulled image. This FP8 package is 28.8 GiB but 65536 failed with "no space
+# left on device" extracting the ~20 GB SGLang image (likely also why v0.2.2
+# never deployed). 131072 is proven with this image.
 memory: 131072
 gpus: 1
 
@@ -45,53 +48,41 @@ containers:
       - HF_HUB_OFFLINE: '1'
       - TRANSFORMERS_OFFLINE: '1'
       - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-      # SGLANG_ENABLE_SPEC_V2 removed: it no longer exists in v0.5.17 (spec
-      # always runs the V2 worker) and would only emit a warning we cannot read.
+      - SGLANG_ENABLE_SPEC_V2: '1'
     command:
       - python3
       - -m
       - sglang.launch_server
       - --model-path
       - /tinfoil/mpk/mpk-d3a7bc98aa8b8a1c7f4025da665a642167d806d9716d1d687ec4407cf99ebd98
+      # Same id the llama.cpp deployment served, so callers need no edits.
       - --served-model-name
       - fable-distill
       - --quantization
       - fp8
-      # The drafter's config.json has auto_map -> dspark.DSparkDraftModel.
-      # Executing that file is acceptable here: it lives inside the attested
-      # dm-verity artifact, under the same integrity guarantee as the weights.
       - --trust-remote-code
       - --reasoning-parser
       - qwen3
       - --tool-call-parser
       - qwen3_coder
-      # --- DSpark speculative decoding (replaces NEXTN 3/1/4) ---
       - --speculative-algorithm
       - DSPARK
       - --speculative-draft-model-path
       - /tinfoil/mpk/mpk-f5375ac19e7f423790758d947ddbb159ccddfbf533b210d681632aeee5d2a7e8
-      # 7 = the checkpoint's own trained draft width (verify width 8 including
-      # the target bonus token). num-draft-tokens is auto-derived; passing it,
-      # or --speculative-num-steps / --speculative-eagle-topk, is either
-      # force-overridden with a warning or a hard ValueError.
       - --speculative-dspark-block-size
       - '7'
-      # REQUIRED: otherwise the draft inherits the target's block-FP8 recipe,
-      # corrupting a checkpoint that is BF16 by design.
       - --speculative-draft-model-quantization
       - unquant
-      # Real flag name. --mamba-scheduler-strategy is a deprecated alias
-      # registered WITHOUT choices=, so a typo would pass argparse and die
-      # ~20 min later inside a validator this enclave cannot show us.
-      - --mamba-radix-cache-strategy
+      # Hybrid Gated-DeltaNet state cache; this arch is on SGLang's
+      # extra_buffer allowlist (srt/arg_groups/overrides.py).
+      - --mamba-scheduler-strategy
       - extra_buffer
-      # --mamba-ssm-dtype and --mamba-full-memory-ratio deliberately UNSET:
-      #  - ssm-dtype: this checkpoint asks for float32; forcing bfloat16
-      #    (carried over from the old Fable-Fusion config) halves GDN
-      #    recurrent-state precision across all 48 linear-attention layers to
-      #    save ~5.7 GiB we do not need.
-      #  - full-memory-ratio: under DSpark the cache solver's divisor grows
-      #    ~2.6x, so 0.2 would collapse the mamba cache and cap concurrency ~7.
+      - --mamba-full-memory-ratio
+      - '0.2'
+      - --mamba-ssm-dtype
+      - bfloat16
+      # SGLang's tuned attention-backend override is is_sm100_supported()-gated
+      # (Blackwell). The H200 is sm90, so it never fires — pin fa3 explicitly.
       - --attention-backend
       - fa3
       - --page-size
@@ -102,12 +93,10 @@ containers:
       - '262144'
       - --chunked-prefill-size
       - '4096'
-      # DSpark's fp32 GDN verify scratch is sized
-      # max_running_requests x num_draft_tokens x 144 MiB, so the library
-      # default of 48 would demand ~55 GiB. This endpoint serves ~1 stream.
+      # The other half of the fix: llama.cpp's MTP is capped at one slot.
       - --max-running-requests
       - '4'
-      - --cuda-graph-max-bs-decode
+      - --cuda-graph-max-bs
       - '4'
       - --watchdog-timeout
       - '600'
@@ -124,10 +113,11 @@ containers:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
+      # ~52 GiB to dm-verity-verify plus SGLang weight load + CUDA graph
+      # capture; the 252 GiB GGUF wrap took ~31 min, this should be well under.
       start_period: 60m
 
-# /get_server_info is the only way to read the PARSED server args from outside a
-# log-blind enclave — it is how we confirm DSpark actually engaged.
+# Fronts SGLang's OpenAI-compatible API over attested HTTPS.
 shim:
   upstream-port: 8080
   paths:
@@ -137,4 +127,3 @@ shim:
     - /v1/chat/completions
     - /v1/completions
     - /get_server_info
-    - /get_model_info
