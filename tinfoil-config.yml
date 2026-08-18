@@ -18,10 +18,12 @@ cpus: 8
 # The model package must fit in enclave RAM: the dm-verity artifact at
 # /tinfoil/mpk is memory-backed, so `memory` has to exceed the mpk size, not
 # merely the runtime's working set — AND the containerd ramdisk holding the
-# pulled image (enclaves are diskless). The official image (18 GB compressed,
-# ~35 GB extracted) forced 131072. docker/Dockerfile.slim cuts that to 6.2 GB
-# compressed / ~16 GB extracted, so 28.8 mpk + ~16 image + ~5 OS fits 65536.
-memory: 65536
+# pulled image (enclaves are diskless), so 131072 is required with the official
+# image (~18 GB compressed / ~35 GB extracted). A slim pip-built image (6.2 GB)
+# fit 65536 but the enclave could not pull it from ghcr.io (timeout), and it
+# lacks nvcc, which SGLang needs to JIT its KV-store kernel — the failure is
+# silent and falls back to a slow scatter. Not worth the RAM saving.
+memory: 131072
 gpus: 1
 
 models:
@@ -31,7 +33,7 @@ models:
 
 containers:
   - name: sglang
-    image: ghcr.io/vitadao/vita-agent-model-sglang:slim-0.5.16@sha256:5bedc55b0ca9b7a219f76e53c8222230705949ca658a4ea3ccb7b62532a93e98
+    image: lmsysorg/sglang:v0.5.17-cu129@sha256:bbe1ec8694ab6b0e6ea0a567c2d492ed7c9bed13cb33ffe356ade0aaa8343c9f
     runtime: nvidia
     gpus: all
     ipc: host
