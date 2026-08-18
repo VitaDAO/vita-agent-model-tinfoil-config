@@ -31,7 +31,7 @@ models:
 
 containers:
   - name: sglang
-    image: lmsysorg/sglang:v0.5.14-cu129@sha256:885da20811baa77e1c680cad0511d50efbaf94ebe43def9182bdf5290f47dbc5
+    image: lmsysorg/sglang:v0.5.16-cu129@sha256:b688781f3ef66522365ec570885a064b6734750ee22f0d32b3ed49aad87fbf90
     runtime: nvidia
     gpus: all
     ipc: host
@@ -41,6 +41,7 @@ containers:
       - TRANSFORMERS_OFFLINE: '1'
       - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
       - SGLANG_ENABLE_SPEC_V2: '1'
+      - SGLANG_ENABLE_OVERLAP_PLAN_STREAM: '1'
     command:
       - python3
       - -m
