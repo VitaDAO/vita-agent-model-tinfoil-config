@@ -54,18 +54,6 @@ containers:
       - qwen3
       - --tool-call-parser
       - qwen3_coder
-      # MTP off the model's own BF16 nextn head (blk.64, 424.7M params).
-      # eagle-topk MUST stay 1. Temperature <= 1.0 and repetition_penalty 1.0
-      # or draft acceptance collapses. llama.cpp measured 37.7% acceptance at
-      # the temp-1.0 thinking sampler and 68.5% at defaults — compare here.
-      - --speculative-algorithm
-      - NEXTN
-      - --speculative-num-steps
-      - '3'
-      - --speculative-eagle-topk
-      - '1'
-      - --speculative-num-draft-tokens
-      - '4'
       # Hybrid Gated-DeltaNet state cache; this arch is on SGLang's
       # extra_buffer allowlist (srt/arg_groups/overrides.py).
       - --mamba-scheduler-strategy
