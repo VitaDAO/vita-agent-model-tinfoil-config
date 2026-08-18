@@ -57,11 +57,11 @@ containers:
       - --speculative-algorithm
       - NEXTN
       - --speculative-num-steps
-      - '5'
+      - '3'
       - --speculative-eagle-topk
       - '1'
       - --speculative-num-draft-tokens
-      - '6'
+      - '4'
       # Hybrid Gated-DeltaNet state cache; this arch is on SGLang's
       # extra_buffer allowlist (srt/arg_groups/overrides.py).
       - --mamba-scheduler-strategy
