@@ -29,4 +29,5 @@ RUN pip install --extra-index-url https://download.pytorch.org/whl/cu129 \
 RUN find /usr/local/lib/python3.12 -name '__pycache__' -type d -prune -exec rm -rf {} + \
     && rm -rf /root/.cache
 
-ENTRYPOINT ["python3"]
+# No ENTRYPOINT: the tinfoil-config `command` supplies the full argv,
+# matching the official lmsysorg/sglang images.
