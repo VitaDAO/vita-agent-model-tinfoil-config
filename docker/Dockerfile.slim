@@ -2,14 +2,19 @@
 #
 # Why: Tinfoil enclaves are diskless — the pulled image lives in a ramdisk
 # carved from enclave RAM. The official lmsysorg/sglang images are ~18 GB
-# compressed (~35 GB extracted) and force the 128 GiB memory tier next to
-# the 28.8 GiB FP8 model package. This keeps only what serving needs:
+# compressed (~35 GB extracted) and force the 128 GiB memory tier next to the
+# 28.8 GiB FP8 model package. This keeps only what serving needs:
 # sglang[srt] (pulls its pinned torch cu129 + sgl-kernel + flashinfer-python)
-# plus the cu129 flashinfer prebuilt kernel cache, so nothing is JIT-compiled
-# or downloaded at runtime (runtime-fetched kernels would be unattested).
+# plus the cu129 flashinfer prebuilt kernel cache.
 #
-# gcc stays: the Gated-DeltaNet linear-attention kernels are Triton, and
-# Triton JIT-compiles host stubs at first use.
+# CUDA TOOLCHAIN: the official images are built on nvidia/cuda:*-devel because
+# SGLang JIT-compiles some kernels at first use — notably its tvm-ffi KV-cache
+# store kernel, whose compile failure is SWALLOWED and silently falls back to a
+# slow Python scatter (invisible in a log-blind enclave). torch's cu129 wheels
+# ship only the CUDA *runtime*, so nvcc must be added explicitly. NVIDIA
+# publishes it as a 41 MB pip wheel, which buys the whole toolchain for ~1% of
+# the size of a devel base image. g++ and ninja are the other half of what the
+# JIT needs; Triton also compiles host stubs for the 48 Gated-DeltaNet layers.
 
 FROM python:3.12-slim-bookworm
 
@@ -18,13 +23,22 @@ ENV PIP_NO_CACHE_DIR=1 \
     FLASHINFER_DISABLE_DOWNLOAD=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc libc6-dev libnuma1 curl ca-certificates \
+        gcc g++ libc6-dev libnuma1 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --extra-index-url https://download.pytorch.org/whl/cu129 \
         "sglang[srt]==0.5.16" \
     && pip install --extra-index-url https://flashinfer.ai/whl/cu129 \
-        flashinfer-jit-cache
+        flashinfer-jit-cache \
+    && pip install nvidia-cuda-nvcc-cu12 nvidia-cuda-cccl-cu12 ninja
+
+# nvcc lands in the wheel's own tree, not on PATH.
+ENV CUDA_HOME=/usr/local/lib/python3.12/site-packages/nvidia/cuda_nvcc
+ENV PATH="${CUDA_HOME}/bin:${PATH}"
+
+# Fail the BUILD if the toolchain is not actually usable, rather than
+# discovering it as a silent slow path 25 minutes into an enclave boot.
+RUN nvcc --version && ninja --version && g++ --version | head -1
 
 RUN find /usr/local/lib/python3.12 -name '__pycache__' -type d -prune -exec rm -rf {} + \
     && rm -rf /root/.cache

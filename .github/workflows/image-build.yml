@@ -36,9 +36,9 @@ jobs:
           file: docker/Dockerfile.slim
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/vitadao/vita-agent-model-sglang:slim-0.5.16
+          tags: ghcr.io/vitadao/vita-agent-model-sglang:slim-0.5.16-nvcc
           provenance: false
 
       - name: Print digest and size
         run: |
-          docker buildx imagetools inspect ghcr.io/vitadao/vita-agent-model-sglang:slim-0.5.16 | head -20
+          docker buildx imagetools inspect ghcr.io/vitadao/vita-agent-model-sglang:slim-0.5.16-nvcc | head -20
