@@ -2,14 +2,13 @@
 #
 # Why: Tinfoil enclaves are diskless — the pulled image lives in a ramdisk
 # carved from enclave RAM. The official lmsysorg/sglang images are ~18 GB
-# compressed (~35 GB extracted; multi-arch flashinfer jit cache + CUDA
-# toolchain + dev tools), which forces the 128 GiB memory tier next to the
-# 28.8 GiB model package. This image keeps ONLY what serving needs:
-# torch cu129 wheels (bundle their own CUDA libs), sglang + sgl-kernel,
-# and flashinfer with precompiled cubins baked in (no runtime downloads —
-# runtime-fetched kernels would be unattested in a TEE).
+# compressed (~35 GB extracted) and force the 128 GiB memory tier next to
+# the 28.8 GiB FP8 model package. This keeps only what serving needs:
+# sglang[srt] (pulls its pinned torch cu129 + sgl-kernel + flashinfer-python)
+# plus the cu129 flashinfer prebuilt kernel cache, so nothing is JIT-compiled
+# or downloaded at runtime (runtime-fetched kernels would be unattested).
 #
-# gcc is kept: the Gated-DeltaNet linear-attention kernels are Triton, and
+# gcc stays: the Gated-DeltaNet linear-attention kernels are Triton, and
 # Triton JIT-compiles host stubs at first use.
 
 FROM python:3.12-slim-bookworm
@@ -23,12 +22,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --extra-index-url https://download.pytorch.org/whl/cu129 \
-        "sglang[runtime_common]==0.5.16" \
-        sgl-kernel \
-        flashinfer-python==0.6.14 \
-        flashinfer-cubin==0.6.14 \
-    && pip uninstall -y pip setuptools wheel 2>/dev/null; \
-    find /usr/local/lib/python3.12 -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; \
-    rm -rf /root/.cache
+        "sglang[srt]==0.5.16" \
+    && pip install --extra-index-url https://flashinfer.ai/whl/cu129 \
+        flashinfer-jit-cache
+
+RUN find /usr/local/lib/python3.12 -name '__pycache__' -type d -prune -exec rm -rf {} + \
+    && rm -rf /root/.cache
 
 ENTRYPOINT ["python3"]
