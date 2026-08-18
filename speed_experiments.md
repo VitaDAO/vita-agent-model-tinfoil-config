@@ -16,6 +16,32 @@ Record spec_accept_length gauge after (a) and (b).
 | E2 | v0.5.16, spec steps=5/draft=6 (v0.5.3) | 104.3 | 93.0 | 466.6 | 2.3 | sequential draft steps cost > extra accepts; 3/4 optimal |
 | E5 | **FP8 quant, v0.5.16, NEXTN 3/4 (v0.6.1)** | **141.7** | **134.6** | 504.3 | 2.2 | **FASTEST single-stream.** agg@8 slightly below BF16 (504 vs 554). v0.6.0 (64 GiB) failed: containerd ramdisk lives in enclave RAM — image pull needs ~25 GiB beyond the mpk |
 
+| E6 | FP8, official `-runtime` image, 64 GiB (v0.6.2) | — | — | — | — | FAILED: same "no space left on device". The runtime variant is only 7% smaller (16.7 vs 18.0 GB compressed) |
+| E7 | FP8, custom slim image (6.2 GB), 64 GiB (v0.7.0) | — | — | — | — | FAILED: enclave could not pull from ghcr.io ("context deadline exceeded" after ~35 min; the same blob pulls fine from a laptop, and Docker Hub serves 18 GB images to this enclave without trouble). ALSO contraindicated: `python:3.12-slim` has no nvcc, and SGLang JIT-compiles its KV-store kernel — failure is swallowed and falls back to a slow scatter |
+| E8 | FP8, SGLang **v0.5.17** (v0.8.0) | | | | | ships #32219 "cut spec-v2 host-seam overhead in hybrid-linear MTP decode ... at low concurrency" = exactly this stack + this bottleneck |
+
+## RAM-minimization goal — CLOSED, 128 GiB stands
+Enclaves are diskless (containerd on a RAM-disk), so enclave RAM must hold mpk + extracted image +
+runtime. 28.8 GiB mpk + ~35 GiB official image + OS does not fit 65536; the only tier between is
+none (64 -> 128). Slim image fits but (a) ghcr is not reliably pullable from the enclave and
+(b) without nvcc it silently loses the JIT'd KV-store kernel. Not worth the RAM.
+
+## Research sweep (13 agents, source-level + adversarial verification, 2026-08-18)
+- **KV-cache dtype: do NOT.** KV is only 64 KiB/token = ~0.2% of decode bytes here (16 full-attn
+  layers x 4 KV heads x 256 head_dim), so zero bandwidth upside. `fp8_e4m3` also casts Q to FP8
+  with NO descale (our ckpt has no k_scale/v_scale; `qwen3_5.py` builds RadixAttention without
+  quant_config) => quality risk + 2-5% slower. `fp8_e5m2` SILENTLY rewrites attention_backend to
+  triton, losing the fa3 path with no error — worst possible outcome on a log-blind enclave.
+- `--quantization-param-path`: silent no-op today; guaranteed boot RuntimeError if combined with
+  fp8 KV. Never set.
+- `--speculative-eagle-topk 1` must stay 1: besides speed, topk<=1 gates `conv_window_dedup`,
+  which halves conv-state memory across all 48 GDN layers.
+- Triton blockwise-FP8 tuning is pointless: all 407 FP8 tensors satisfy N%64==0 && K%128==0 so
+  DeepGEMM (a core dep, prebuilt .so) handles them; the Triton path never executes.
+- Roofline at accept 2.2: 141.7 tok/s = ~41% of H200 HBM. Config-only ceiling 145-165;
+  hard ceiling ~250. The two real levers are (1) accept_length 2.2 -> 3.0 = +36% (a draft-head
+  quality problem, not a serving-flag one) and (2) upstream kernel work (PRs #31652, #35142).
+
 ## Verdict (2026-08-18)
 Fastest found: **FP8 + SGLang v0.5.16 + NEXTN 3/4 = 141.7 tok/s greedy / 134.6 t=1.0**
 (1.85x the morning's llama.cpp 72.7). For pure multi-tenant throughput BF16 v0.5.1
