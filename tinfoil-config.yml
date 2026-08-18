@@ -17,10 +17,11 @@ cvm-version: 0.7.5
 cpus: 8
 # The model package must fit in enclave RAM: the dm-verity artifact at
 # /tinfoil/mpk is memory-backed, so `memory` has to exceed the mpk size, not
-# merely the runtime's working set. This FP8 package is 28.8 GiB; 65536 leaves
-# ~35 GiB for the SGLang runtime, matching the proven v0.2.2 headroom.
-# Undersized memory fails in <90s with an empty error_message.
-memory: 65536
+# merely the runtime's working set — AND the containerd ramdisk holding the
+# pulled image. This FP8 package is 28.8 GiB but 65536 failed with "no space
+# left on device" extracting the ~20 GB SGLang image (likely also why v0.2.2
+# never deployed). 131072 is proven with this image.
+memory: 131072
 gpus: 1
 
 models:
