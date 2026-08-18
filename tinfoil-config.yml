@@ -21,7 +21,7 @@ cpus: 8
 # pulled image. This FP8 package is 28.8 GiB but 65536 failed with "no space
 # left on device" extracting the ~20 GB SGLang image (likely also why v0.2.2
 # never deployed). 131072 is proven with this image.
-memory: 65536
+memory: 131072
 gpus: 1
 
 models:
@@ -31,7 +31,7 @@ models:
 
 containers:
   - name: sglang
-    image: lmsysorg/sglang:v0.5.16-cu129-runtime@sha256:f9a7b74fb843cb2089320fa7f09b6bc7892e3ce5da3b284134c466ed8d897a93
+    image: lmsysorg/sglang:v0.5.16-cu129@sha256:b688781f3ef66522365ec570885a064b6734750ee22f0d32b3ed49aad87fbf90
     runtime: nvidia
     gpus: all
     ipc: host
