@@ -17,17 +17,16 @@ cvm-version: 0.7.5
 cpus: 8
 # The model package must fit in enclave RAM: the dm-verity artifact at
 # /tinfoil/mpk is memory-backed, so `memory` has to exceed the mpk size, not
-# merely the runtime's working set. This package is ~52 GiB; the 65536 tier
-# would leave ~12 GiB for the SGLang runtime (torch + CUDA host allocations +
-# compile caches), less than the ~27 GiB headroom the proven v0.2.2 sizing
-# gave it. Undersized memory fails in <90s with an empty error_message.
-memory: 131072
+# merely the runtime's working set. This FP8 package is 28.8 GiB; 65536 leaves
+# ~35 GiB for the SGLang runtime, matching the proven v0.2.2 headroom.
+# Undersized memory fails in <90s with an empty error_message.
+memory: 65536
 gpus: 1
 
 models:
-  - name: "qwen3-8-27b-fable-distill"
-    repo: "TeichAI/Qwen3.8-27B-Fable-Distill@ac2b133895580be05ee90a6a7cdcc23cdf998bd0"
-    mpk: "03de8ccf58a13db876e540dfb4b5979908b64a8d0bc1b792fa9d920f8dc65350_55593234432_8c9f69f6-52b1-5c88-beec-37a254dd918a"
+  - name: "qwen3-8-27b-fable-distill-fp8"
+    repo: "alexdobrin/Qwen3.8-27B-Fable-Distill-FP8@dad2544d418ffb797af211fb49e4dd770af8e33f"
+    mpk: "d3a7bc98aa8b8a1c7f4025da665a642167d806d9716d1d687ec4407cf99ebd98_30897172480_cb4975d7-de9d-52dd-b59e-09d7a85ff666"
 
 containers:
   - name: sglang
@@ -46,10 +45,12 @@ containers:
       - -m
       - sglang.launch_server
       - --model-path
-      - /tinfoil/mpk/mpk-03de8ccf58a13db876e540dfb4b5979908b64a8d0bc1b792fa9d920f8dc65350
+      - /tinfoil/mpk/mpk-d3a7bc98aa8b8a1c7f4025da665a642167d806d9716d1d687ec4407cf99ebd98
       # Same id the llama.cpp deployment served, so callers need no edits.
       - --served-model-name
       - fable-distill
+      - --quantization
+      - fp8
       - --reasoning-parser
       - qwen3
       - --tool-call-parser
