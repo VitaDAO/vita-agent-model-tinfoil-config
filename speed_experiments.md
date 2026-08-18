@@ -20,7 +20,29 @@ Record spec_accept_length gauge after (a) and (b).
 | E7 | FP8, custom slim image (6.2 GB), 64 GiB (v0.7.0) | — | — | — | — | FAILED: enclave could not pull from ghcr.io ("context deadline exceeded" after ~35 min; the same blob pulls fine from a laptop, and Docker Hub serves 18 GB images to this enclave without trouble). ALSO contraindicated: `python:3.12-slim` has no nvcc, and SGLang JIT-compiles its KV-store kernel — failure is swallowed and falls back to a slow scatter |
 | E8 | FP8, SGLang **v0.5.17** (v0.8.0) | | | | | ships #32219 "cut spec-v2 host-seam overhead in hybrid-linear MTP decode ... at low concurrency" = exactly this stack + this bottleneck |
 
+## FINAL verified numbers — v0.6.1, re-measured 2026-08-19 with the extended protocol
+```
+greedy   : 140.9 tok/s (accept 2.275)
+t=1.0    : 128.0 tok/s (accept 2.05), TTFT 0.26-0.29 s
+agg @8   : 639.9 tok/s      <- beats the BF16 aggregate record (553.6); the earlier
+                               FP8 reading of 504 was taken on a cold server
+long 16k : 34,323-token prompt -> TTFT 3.36 s, decode 176.0 tok/s
+           repeat (radix prefix cache warm) -> TTFT 0.67 s (5x faster), decode 176.9
+quality  : PASS
+```
+**Decode is FASTER at long context (176 vs 141)** — with 34k tokens of context the MTP
+draft head predicts far better, so acceptance rises and each forward pass yields more
+tokens. Real agent traffic (long prompts, repeated prefixes) therefore runs faster than
+the 800-token synthetic bench, not slower.
+
 ## RAM-minimization goal — CLOSED, 128 GiB stands
+**Also economically moot:** the dashboard shows Container Usage "Billing Exempt"
+($55.61 accumulated, $0.00 charged), so the RAM tier costs nothing. E7b (2026-08-19)
+retried the slim image and hit the SAME ghcr timeout at 31 min — reproducible, not
+transient. Note the other VitaDAO enclaves (vita-agent-prod, vita-ingest, aubrai-server)
+DO pull from ghcr fine; they are small app images, so the limit is ghcr throughput vs
+the pull deadline at ~6 GB, not reachability. Docker Hub serves 18 GB to this enclave.
+
 Enclaves are diskless (containerd on a RAM-disk), so enclave RAM must hold mpk + extracted image +
 runtime. 28.8 GiB mpk + ~35 GiB official image + OS does not fit 65536; the only tier between is
 none (64 -> 128). Slim image fits but (a) ghcr is not reliably pullable from the enclave and
