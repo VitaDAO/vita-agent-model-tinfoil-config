@@ -1,56 +1,60 @@
 # Tinfoil Container Configuration — vita-agent-model
 #
-# Serves DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
-# on the control.inf6 H200 via llama.cpp, using the MTP-Q8_0 quant (30.2 GB).
+# Serves TeichAI/Qwen3.8-27B-Fable-Distill-GGUF (BF16, 54.7 GB across two
+# shards) on the control.inf6 H200 via llama.cpp. Replaces the retired
+# Fable-Fusion-711 deployment; the SGLang/FP8 variant of that model lives on
+# in tinfoil-config.sglang.yml and was never successfully deployed.
 #
 # Runtime choice: the wrapped artifact is GGUF, which SGLang cannot load and
-# vLLM's GGUF path does not cover for this hybrid Gated-DeltaNet arch. llama.cpp
-# is the only runtime that reads it. See tinfoil-config.sglang.yml for the
-# higher-concurrency variant, which needs the BF16 safetensors wrapped instead.
+# vLLM does not cover for this hybrid Gated-DeltaNet arch. llama.cpp only.
+# Same attention topology as Fable-Fusion-711 (64 layers, 16 full-attention,
+# 4 KV heads x 256 head_dim, 256k native), so the KV math carries over:
+# a full 262144 slot costs ~17 GB. 54.7 GB weights + ~17 GB KV + the BF16
+# MTP head fit comfortably in the H200's 141 GB.
 #
 # CONCURRENCY LIMIT: llama.cpp's MTP implementation (ggml-org/llama.cpp#22673)
 # only supports a single server slot, hence -np 1. This endpoint serves one
-# request at a time. Dropping --spec-type/--spec-draft-n-max allows raising -np,
-# at the cost of the MTP speedup.
+# request at a time. Dropping --spec-type/--spec-draft-n-max allows raising
+# -np, at the cost of the MTP speedup. This model ships a nextn head kept at
+# BF16 in every quant (blk.64, 424.7M params), so draft-mtp works here too.
 
 cvm-version: 0.7.5
 cpus: 8
-# Host RAM, not VRAM. With -ngl all, weights and KV cache live entirely in the
-# H200's 141 GB of VRAM; the host only needs mmap page cache while the 30 GB
-# file streams to the GPU, CUDA pinned staging buffers, and a small post-load
-# RSS. 64 GB is headroom, not a measurement — trim it against
-# `tinfoil container metrics` once this has served real traffic.
-memory: 65536
+# The model package must fit in enclave RAM: the dm-verity artifact at
+# /tinfoil/mpk is memory-backed, so `memory` has to exceed the mpk size, not
+# merely the runtime's working set. This package is 252.2 GiB; the 262144
+# (256 GiB) tier would clear it by only ~3.8 GiB, and undersized memory fails
+# in <90s with an empty error_message. 524288 is the proven-safe tier on this
+# host (the 465 GB Fable-Fusion wrap ran on it).
+memory: 524288
 gpus: 1
 
 models:
-  - name: "fable-fusion-711-gguf"
-    repo: "DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF@bca057c5733a1a9ad5d99ce7362d620883537069"
-    mpk: "da73863f4f3fcb4ecfb5fe3acf56bf6f0e5db6ba21c7a9da6ca7629e521fa7ba_465146941440_819dfb68-8580-5ce9-89ff-a168b84a8b9c"
+  - name: "qwen3-8-27b-fable-distill-gguf"
+    repo: "TeichAI/Qwen3.8-27B-Fable-Distill-GGUF@accb5eb6e2077d85c30dffb6263af9d8ace08b77"
+    mpk: "e64929ed6279cf0af50f26ef6c599ec772d03a64546227ddd42151bc729a55fc_270792437760_c023f3da-b0ff-55f8-9cfc-92eb6886301c"
 
 containers:
   - name: llamacpp
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:a50b12bb92de0253d2737824ca1887f410e07b4dd3e3028f74a5a0a67c789e4b
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:b2497f8834f5ecb4e38530f6bf2734b8e0be107ff48e4720145911c86930f2ce
     runtime: nvidia
     gpus: all
     ipc: host
     restart: always
     command:
-      # The wrap contains all 24 quants (465 GB); select one explicitly.
+      # The wrap contains every quant (252 GiB); select BF16 explicitly.
+      # Pointing at shard 1 of 2 is enough — llama.cpp loads the rest.
       - -m
-      - /tinfoil/mpk/mpk-da73863f4f3fcb4ecfb5fe3acf56bf6f0e5db6ba21c7a9da6ca7629e521fa7ba/Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q8_0.gguf
+      - /tinfoil/mpk/mpk-e64929ed6279cf0af50f26ef6c599ec772d03a64546227ddd42151bc729a55fc/BF16/Qwen3.8-27B-Fable-Distill-BF16-00001-of-00002.gguf
       - -a
-      - fable-711
+      - fable-distill
       - -ngl
       - all
-      # 256k native. KV is ~64 KB/token (16 of 64 layers are full-attention,
-      # 4 KV heads x 256 head_dim), so a full 262144 slot costs ~17 GB.
-      # 30.2 GB weights + ~17 GB KV sits well inside the H200's 141 GB.
       - -c
       - '262144'
       - -np
       - '1'
-      # MTP speculative decoding off the quant's embedded MTP tensors.
+      # MTP speculative decoding off the model's embedded nextn tensors.
       - --spec-type
       - draft-mtp
       - --spec-draft-n-max
@@ -59,15 +63,18 @@ containers:
       # --reasoning-parser qwen3, so callers survive a runtime swap unchanged.
       - --reasoning-format
       - deepseek
+      # Qwen3.5-family template with thinking; accepts enable_thinking and
+      # reasoning_effort (low/medium/xhigh, template default xhigh).
       - --jinja
       # Text-only endpoint; keeps llama-server off the mmproj-*.gguf files
-      # that sit alongside the weights in the same wrap.
+      # that sit alongside the weights in the same wrap. The model is
+      # image-text-to-text — drop this and pass --mmproj to enable vision.
       - --no-mmproj
       - -fa
       # Quoted: bare `on` is a YAML 1.1 boolean, which would emit a non-string arg.
       - 'on'
       # Exposes draft-acceptance counters. Author's rule: below ~50% acceptance,
-      # the non-MTP quants are faster, so this is the knob worth watching.
+      # the non-MTP path is faster, so this is the knob worth watching.
       - --metrics
       - --host
       - 127.0.0.1
@@ -77,7 +84,8 @@ containers:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
-      # First boot verifies the 465 GB package through dm-verity.
+      # First boot verifies the 252 GiB package through dm-verity; the 465 GB
+      # Fable-Fusion wrap took ~16 min, so expect roughly half that.
       start_period: 60m
 
 # Fronts llama.cpp's OpenAI-compatible API over attested HTTPS.

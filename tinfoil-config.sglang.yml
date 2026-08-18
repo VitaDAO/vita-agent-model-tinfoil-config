@@ -1,32 +1,33 @@
-# Tinfoil Container Configuration — vita-agent-model (SGLang / FP8)
+# Tinfoil Container Configuration — vita-agent-model (SGLang / BF16)
 #
-# Replaces the llama.cpp + GGUF deployment, which measured 97.7 tok/s — only
-# ~1.19 TB/s of weight traffic against the H200's ~4.8 TB/s, i.e. ~25% of the
-# card. At 25% utilisation the limiter is per-token overhead, not bandwidth,
-# so a smaller quant would not have helped; the runtime had to change.
+# SGLang deployment of TeichAI/Qwen3.8-27B-Fable-Distill (BF16 safetensors,
+# ~55 GB). Replaces the llama.cpp + GGUF v0.3.0 deployment, which measured
+# 72.7 tok/s — ~1.9 TB/s of weight traffic against the H200's ~4.8 TB/s
+# (~39% of the card), limited by llama.cpp per-token overhead and its
+# single-slot MTP. SGLang runs NEXTN speculative decoding with real
+# concurrency and proper kernels for this hybrid Gated-DeltaNet arch.
 #
-# FP8 over BF16 deliberately: BF16 is 55.6 GB, nearly double the 30.2 GB of
-# bytes-per-token we already serve, giving it a *lower* ceiling than the GGUF
-# it would replace. This FP8 build is 36.8 GB and runs on the H200's native
-# FP8 tensor cores.
+# BF16 deliberately: no FP8 checkpoint of this distill exists yet, and an
+# on-the-fly quant would not protect the sensitive linear_attn conv1d/in_proj
+# tensors the way the old Fusion FP8's modules_to_not_convert did. If a
+# careful block-wise FP8 appears, it halves bytes-per-token again.
 #
-# Quantisation is block-wise e4m3 (weight_block_size [128,128], dynamic
-# activations). The Gated-DeltaNet linear_attn conv1d/in_proj tensors are in
-# modules_to_not_convert, so the sensitive state-space path stays high
-# precision. All 15 mtp.* tensors survive the conversion, which is what keeps
-# NEXTN speculative decoding available.
 
 cvm-version: 0.7.5
 cpus: 8
-# Host RAM, not VRAM — weights and KV live on the GPU. See the llama.cpp config
-# for the derivation; real need is ~16-32 GB, this is headroom.
-memory: 65536
+# The model package must fit in enclave RAM: the dm-verity artifact at
+# /tinfoil/mpk is memory-backed, so `memory` has to exceed the mpk size, not
+# merely the runtime's working set. This package is ~52 GiB; the 65536 tier
+# would leave ~12 GiB for the SGLang runtime (torch + CUDA host allocations +
+# compile caches), less than the ~27 GiB headroom the proven v0.2.2 sizing
+# gave it. Undersized memory fails in <90s with an empty error_message.
+memory: 131072
 gpus: 1
 
 models:
-  - name: "qwen3-6-27b-fable-fusion-711-fp8"
-    repo: "xzanomad/Qwen3.6-27B-Fable-Fusion-711-FP8@ff8f3b38c46ffbbb1c0b2b34bb02e2783b41c65a"
-    mpk: "84718781d85366d862837feb4f049f295ce2a0cea0dcb003a92f841d713c6c34_36795064320_1617f750-244a-5b62-8638-dd5fd162da21"
+  - name: "qwen3-8-27b-fable-distill"
+    repo: "TeichAI/Qwen3.8-27B-Fable-Distill@ac2b133895580be05ee90a6a7cdcc23cdf998bd0"
+    mpk: "03de8ccf58a13db876e540dfb4b5979908b64a8d0bc1b792fa9d920f8dc65350_55593234432_8c9f69f6-52b1-5c88-beec-37a254dd918a"
 
 containers:
   - name: sglang
@@ -45,20 +46,18 @@ containers:
       - -m
       - sglang.launch_server
       - --model-path
-      - /tinfoil/mpk/mpk-84718781d85366d862837feb4f049f295ce2a0cea0dcb003a92f841d713c6c34
-      # Unchanged from the llama.cpp deployment so callers need no edits.
+      - /tinfoil/mpk/mpk-03de8ccf58a13db876e540dfb4b5979908b64a8d0bc1b792fa9d920f8dc65350
+      # Same id the llama.cpp deployment served, so callers need no edits.
       - --served-model-name
-      - fable-711
-      - --quantization
-      - fp8
+      - fable-distill
       - --reasoning-parser
       - qwen3
       - --tool-call-parser
       - qwen3_coder
-      # MTP off the model's own 15 mtp.* tensors. eagle-topk MUST stay 1.
-      # Author's constraint: temperature <= 1.0 and repetition_penalty 1.0,
-      # or draft acceptance collapses. llama.cpp measured 49.6% acceptance
-      # (71.3/46.8/30.3% by position) — compare against that here.
+      # MTP off the model's own BF16 nextn head (blk.64, 424.7M params).
+      # eagle-topk MUST stay 1. Temperature <= 1.0 and repetition_penalty 1.0
+      # or draft acceptance collapses. llama.cpp measured 37.7% acceptance at
+      # the temp-1.0 thinking sampler and 68.5% at defaults — compare here.
       - --speculative-algorithm
       - NEXTN
       - --speculative-num-steps
@@ -107,10 +106,11 @@ containers:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
-      # 36.8 GB to verify vs 465 GB for the GGUF wrap, so boot should beat
-      # the ~16 min the llama.cpp deployment took.
+      # ~52 GiB to dm-verity-verify plus SGLang weight load + CUDA graph
+      # capture; the 252 GiB GGUF wrap took ~31 min, this should be well under.
       start_period: 60m
 
+# Fronts SGLang's OpenAI-compatible API over attested HTTPS.
 shim:
   upstream-port: 8080
   paths:
