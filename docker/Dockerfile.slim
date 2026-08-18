@@ -1,0 +1,34 @@
+# Minimal SGLang image for the vita-agent-model enclave.
+#
+# Why: Tinfoil enclaves are diskless — the pulled image lives in a ramdisk
+# carved from enclave RAM. The official lmsysorg/sglang images are ~18 GB
+# compressed (~35 GB extracted; multi-arch flashinfer jit cache + CUDA
+# toolchain + dev tools), which forces the 128 GiB memory tier next to the
+# 28.8 GiB model package. This image keeps ONLY what serving needs:
+# torch cu129 wheels (bundle their own CUDA libs), sglang + sgl-kernel,
+# and flashinfer with precompiled cubins baked in (no runtime downloads —
+# runtime-fetched kernels would be unattested in a TEE).
+#
+# gcc is kept: the Gated-DeltaNet linear-attention kernels are Triton, and
+# Triton JIT-compiles host stubs at first use.
+
+FROM python:3.12-slim-bookworm
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    FLASHINFER_DISABLE_DOWNLOAD=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libc6-dev libnuma1 curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --extra-index-url https://download.pytorch.org/whl/cu129 \
+        "sglang[runtime_common]==0.5.16" \
+        sgl-kernel \
+        flashinfer-python==0.6.14 \
+        flashinfer-cubin==0.6.14 \
+    && pip uninstall -y pip setuptools wheel 2>/dev/null; \
+    find /usr/local/lib/python3.12 -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; \
+    rm -rf /root/.cache
+
+ENTRYPOINT ["python3"]
