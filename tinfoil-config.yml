@@ -41,7 +41,6 @@ containers:
       - TRANSFORMERS_OFFLINE: '1'
       - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
       - SGLANG_ENABLE_SPEC_V2: '1'
-      - SGLANG_ENABLE_OVERLAP_PLAN_STREAM: '1'
     command:
       - python3
       - -m
