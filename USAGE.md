@@ -151,12 +151,35 @@ print(r.choices[0].message.content)             # the answer
 Tool calling is enabled (`--tool-call-parser qwen3_coder`); pass `tools=[...]` as usual.
 Streaming works normally, and `reasoning_content` streams before `content`.
 
+### 7b. Vision — enabled, no flag required
+
+The model is image-text-to-text and the vision tower is served. Pass images as base64 data URLs
+(the enclave has no internet, so **remote image URLs will not work**):
+
+```python
+import base64
+b64 = base64.b64encode(open("figure.png", "rb").read()).decode()
+r = client.chat.completions.create(
+    model="fable-distill",
+    messages=[{"role": "user", "content": [
+        {"type": "text", "text": "Read this chart and compute the absolute risk reduction."},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+    ]}],
+    max_tokens=900, temperature=0.3,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+```
+
+Measured: a 640×400 test image cost 240 image tokens and was described correctly down to shape
+positions, outlines and embedded text, in 1.6 s. A labelled bar chart (384 image tokens) had all
+four values read exactly, plus a correct downstream ARR and NNT calculation, in **1.2 s**.
+Images bill as prompt tokens — check `usage.prompt_tokens_details.image_tokens`.
+
 ---
 
 ## 8. Operating notes
 
-- **Vision is available but not served.** The weights include the vision tower; the server runs
-  text-only. Enabling it is a config change plus a redeploy.
+- **Vision is ON** — no flag needed, see section 7b.
 - **Restarts cost ~20 minutes** (dm-verity verification of the 28.8 GiB model artifact, weight
   load, CUDA-graph capture). It is not a service you bounce casually.
 - **Rollback:** `tinfoil container start vita-agent-model --tag v0.6.1` restores this exact
