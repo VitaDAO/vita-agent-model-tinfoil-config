@@ -1,26 +1,9 @@
-# Tinfoil Container Configuration — vita-agent-model (SGLang / BF16)
-#
-# SGLang deployment of TeichAI/Qwen3.8-27B-Fable-Distill (BF16 safetensors,
-# ~55 GB). Replaces the llama.cpp + GGUF v0.3.0 deployment, which measured
-# 72.7 tok/s — ~1.9 TB/s of weight traffic against the H200's ~4.8 TB/s
-# (~39% of the card), limited by llama.cpp per-token overhead and its
-# single-slot MTP. SGLang runs NEXTN speculative decoding with real
-# concurrency and proper kernels for this hybrid Gated-DeltaNet arch.
-#
-# BF16 deliberately: no FP8 checkpoint of this distill exists yet, and an
-# on-the-fly quant would not protect the sensitive linear_attn conv1d/in_proj
-# tensors the way the old Fusion FP8's modules_to_not_convert did. If a
-# careful block-wise FP8 appears, it halves bytes-per-token again.
-#
-
+# Fable Distill FP8 + DFlash2 on one confidential H200.
+# Target weights unchanged; the draft model proposes tokens for Fable to verify.
 cvm-version: 0.7.5
 cpus: 8
-# The model package must fit in enclave RAM: the dm-verity artifact at
-# /tinfoil/mpk is memory-backed, so `memory` has to exceed the mpk size, not
-# merely the runtime's working set — AND the containerd ramdisk holding the
-# pulled image. This FP8 package is 28.8 GiB but 65536 failed with "no space
-# left on device" extracting the ~20 GB SGLang image (likely also why v0.2.2
-# never deployed). 131072 is proven with this image.
+# Diskless enclave: host RAM holds both model packages and the runtime image.
+# Keep 128 GiB; cold-start fit of this candidate must be verified on deployment.
 memory: 131072
 gpus: 1
 
@@ -29,9 +12,13 @@ models:
     repo: "alexdobrin/Qwen3.8-27B-Fable-Distill-FP8@dad2544d418ffb797af211fb49e4dd770af8e33f"
     mpk: "d3a7bc98aa8b8a1c7f4025da665a642167d806d9716d1d687ec4407cf99ebd98_30897172480_cb4975d7-de9d-52dd-b59e-09d7a85ff666"
 
+  - name: "qwen3-8-27b-dflash2"
+    repo: "incoai/Qwen3.8-27B-DFlash2@dedf8df68adfb1afeaf7b7480c0a0243108177b4"
+    mpk: "78fdfcd20864dd0e255a5bc1262568862d32b12e21aff55e3328a9492ba85b5d_3849117696_df5c8e62-91b1-5e58-ba2c-1f1257bf30a3"
+
 containers:
   - name: sglang
-    image: lmsysorg/sglang:v0.5.16-cu129@sha256:b688781f3ef66522365ec570885a064b6734750ee22f0d32b3ed49aad87fbf90
+    image: lmsysorg/sglang:nightly-dev-cu13-20260909-db272201@sha256:64e4914593690fbba806f19ac8b2237f78815e9046dd2fc874f630129f281607
     runtime: nvidia
     gpus: all
     ipc: host
@@ -40,7 +27,6 @@ containers:
       - HF_HUB_OFFLINE: '1'
       - TRANSFORMERS_OFFLINE: '1'
       - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-      - SGLANG_ENABLE_SPEC_V2: '1'
     command:
       - python3
       - -m
@@ -57,16 +43,15 @@ containers:
       - --tool-call-parser
       - qwen3_coder
       - --speculative-algorithm
-      - NEXTN
-      - --speculative-num-steps
-      - '3'
-      - --speculative-eagle-topk
-      - '1'
+      - DFLASH
+      - --speculative-draft-model-path
+      - /tinfoil/mpk/mpk-78fdfcd20864dd0e255a5bc1262568862d32b12e21aff55e3328a9492ba85b5d
+      - --speculative-draft-model-quantization
+      - fp8
       - --speculative-num-draft-tokens
-      - '4'
-      # Hybrid Gated-DeltaNet state cache; this arch is on SGLang's
-      # extra_buffer allowlist (srt/arg_groups/overrides.py).
-      - --mamba-scheduler-strategy
+      - '8'
+      # Same cache strategy as the matched H200 benchmark.
+      - --mamba-radix-cache-strategy
       - extra_buffer
       - --mamba-full-memory-ratio
       - '0.2'
@@ -84,10 +69,10 @@ containers:
       - '262144'
       - --chunked-prefill-size
       - '4096'
-      # The other half of the fix: llama.cpp's MTP is capped at one slot.
+      # Concurrent inference remains enabled; overlap scheduling is the default.
       - --max-running-requests
       - '16'
-      - --cuda-graph-max-bs
+      - --cuda-graph-max-bs-decode
       - '16'
       - --watchdog-timeout
       - '600'
@@ -104,8 +89,7 @@ containers:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
-      # ~52 GiB to dm-verity-verify plus SGLang weight load + CUDA graph
-      # capture; the 252 GiB GGUF wrap took ~31 min, this should be well under.
+      # Allow verified package loading and first-start kernel/graph compilation.
       start_period: 60m
 
 # Fronts SGLang's OpenAI-compatible API over attested HTTPS.
