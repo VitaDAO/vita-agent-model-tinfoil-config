@@ -27,6 +27,10 @@ Canonical task: https://github.com/VitaDAO/vita-agent-model-tinfoil-config/issue
 - Reject unsupported substantive intersections explicitly instead of silently
   generating a weaker grammar. Preserve no-op/annotation conjunctions so existing
   references, patterns, and formats still take their original parser paths.
+- Deliver the caller's `response_format.json_schema` to the standard Jinja
+  renderer as model context. Grammar enforcement remains unchanged. Specialized
+  encoders retain their existing rendering, and tool-only requests retain their
+  original messages. No new health instructions or completion repair is added.
 
 This is a bounded extension, **not full JSON Schema support**. General contains
 predicates/items, positional tuple intersections, enum/const arrays combined with
@@ -58,10 +62,11 @@ file hashes. The resulting package version is `0.2.1+vita3`.
 
 `docker/Dockerfile.schema-compiler` derives from the exact live image digest
 `sha256:64e4914593690fbba806f19ac8b2237f78815e9046dd2fc874f630129f281607`.
-It builds and tests the compiler, replaces only its wheel in the runtime, and
-tests the installed Python binding plus SGLang's nonstreaming/incremental Qwen
-parser. It does not change `tinfoil-config.yml`, model packages, launch flags,
-or the live enclave. These installed-image checks require an actual Linux image
+It builds and tests the compiler, replaces its wheel in the runtime, and tests
+the installed Python binding plus SGLang's nonstreaming/incremental Qwen parser.
+It also applies the hash-checked rendering correction to pinned SGLang source
+and runs the rendering tests against that installed source. Model packages and
+launch flags remain unchanged. These installed-image checks require a Linux image
 build; local C++ tests do not substitute for them.
 
 The dedicated workflow runs native checks on a PR. Image publication is manual
@@ -74,18 +79,18 @@ Before release:
 1. Finish independent review, Linux native checks and the installed-image build.
 2. Record source revision, image digest, test configuration/enclave and rollback.
 3. On a separate H200 test enclave, keep target/draft weights, DFlash, scheduling
-   and sampling identical to the current server. Change the compiler image only.
+   and sampling identical to the current server. Change the serving image only.
 4. Run the unchanged handoff probe A–F five times each with default thinking;
    also inspect required-tool and streaming behavior. No partial-JSON repair.
 5. Run the same single-stream protocol as the baseline. Decode throughput must
    remain within 10%; report first-token and total latency separately. Local
    compiler timings are not inference-speed evidence.
-6. Obtain the exact-step release approval required by the handoff, pin/attest the
+6. Record the principal's release authorization, pin/attest the
    tested digest, select the new tag with Tinfoil CLI, then verify attestation,
    health, and synthetic smokes. Retain live `v0.10.0` as the recorded rollback
    until the target is rechecked immediately before release.
 
-No fixed image has been deployed. Ordinary Vita Agent final calls currently do
+No replacement has been promoted to the main model endpoint. Ordinary Vita Agent final calls currently do
 not request strict decoding; their separate opt-in follows successful server
 acceptance. This task does not promise to remove every application timeout,
 unsupported inference, or recall failure.
@@ -97,3 +102,28 @@ A `compiler-build-*` tag can explicitly build an immutable candidate from a revi
 Conjunctions that contain both resource identifiers (`$id`/`$anchor`) and references are rejected, including identifiers in unused definitions. The pinned resolver has no resource-scope stack; attempting to exempt apparently unrelated identifiers admitted incorrect values through reachable definitions. This conservative rejection is intentional until resource-aware resolution is implemented separately. Ordinary references without resource identifiers and identifier-bearing finite values remain supported. The original Vita answer contract contains no resource identifiers, so this boundary does not restrict its acceptance cases.
 
 Review disposition: the request to accept unused identifier/reference combinations is deferred as a compatibility extension. Reverting that extension fixes the demonstrated invalid-value acceptance. The reviewed serving source remains `202db8d`; any subsequent documentation-only or integration commit must preserve the compiler/image identity.
+
+### Live findings on September 11
+
+The compiler-only test image was attested and exercised on H200 with DFlash.
+The original short contract passed 0/5 on the baseline and 4/5 on the
+candidate. The remaining captured failure reached `max_tokens=7000` while
+repeating permitted source IDs. Exposing the contract in model context passed
+5/5 in a controlled diagnostic; the Jinja correction implements that exact
+context delivery inside the server.
+
+Long diagnostic cases remain **unaccepted**: JSON output passed 4/5 (one turn
+used 6,778 thinking tokens and exhausted its 7,000-token total), and named-tool
+output passed 3/5 (two completed values contained fewer blocks than requested).
+Every captured completed value conformed to the contract, which does not itself
+require the prompt's six blocks. Structural conformance, instruction following,
+and completion within the token limit must be reported separately. These
+synthetic prompts supply source identifiers without the underlying measurements;
+they are not a clinical-quality oracle. The acceptance gate is not relaxed.
+
+`scripts/install_response_contract.py` checks the exact upstream source hash
+before editing. `tests/serving/test_response_contract.py <serving_chat.py>` runs
+the production Jinja and continuation methods with a recording tokenizer. Four
+checks fail on unmodified pinned source; all six pass with contract delivery.
+This proves rendering, not successful GPU completion. The original tool schema,
+thinking configuration and sampling parameters are unchanged for the next test.

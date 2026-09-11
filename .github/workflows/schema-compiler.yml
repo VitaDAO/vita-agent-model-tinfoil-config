@@ -6,6 +6,7 @@ on:
       - docker/Dockerfile.schema-compiler
       - docker/schema-compiler/**
       - scripts/build_schema_compiler.py
+      - scripts/install_response_contract.py
       - tests/**
       - .github/workflows/schema-compiler.yml
   workflow_dispatch:
@@ -30,6 +31,13 @@ jobs:
         run: |
           python tests/serving/check_fixtures.py
           python scripts/build_schema_compiler.py --work-dir "$RUNNER_TEMP/compiler-build"
+      - name: Verify response contract at the pinned rendering boundary
+        run: |
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/sgl-project/sglang/db272201a2dbd72e5699e443240a851f1313ad45/python/sglang/srt/entrypoints/openai/serving_chat.py \
+            --output "$RUNNER_TEMP/serving_chat.py"
+          python scripts/install_response_contract.py --source "$RUNNER_TEMP/serving_chat.py"
+          python tests/serving/test_response_contract.py "$RUNNER_TEMP/serving_chat.py"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: compiler-build-manifest
