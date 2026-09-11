@@ -91,3 +91,9 @@ acceptance. This task does not promise to remove every application timeout,
 unsupported inference, or recall failure.
 
 A `compiler-build-*` tag can explicitly build an immutable candidate from a reviewed task commit before this workflow reaches the default branch. This tag does not match the Tinfoil attestation workflow's `v*.*.*` trigger and does not deploy or select a model release. PR runs remain verification-only.
+
+### Deliberate reference-support boundary
+
+Conjunctions that contain both resource identifiers (`$id`/`$anchor`) and references are rejected, including identifiers in unused definitions. The pinned resolver has no resource-scope stack; attempting to exempt apparently unrelated identifiers admitted incorrect values through reachable definitions. This conservative rejection is intentional until resource-aware resolution is implemented separately. Ordinary references without resource identifiers and identifier-bearing finite values remain supported. The original Vita answer contract contains no resource identifiers, so this boundary does not restrict its acceptance cases.
+
+Review disposition: the request to accept unused identifier/reference combinations is deferred as a compatibility extension. Reverting that extension fixes the demonstrated invalid-value acceptance. The reviewed serving source remains `202db8d`; any subsequent documentation-only or integration commit must preserve the compiler/image identity.

@@ -280,12 +280,8 @@ inline Value Collapse(const Value& v) {
 inline Value Conjoin(const Value& left_input, const Value& right_input) {
   // The upstream resolver has one root document, not a resource-scope stack.
   // Keep scoped references unsupported even when nested inside an alternative.
-  auto defines_scope = [](const Value& input) {
-    return input.is<Object>() &&
-           (input.get<Object>().count("$id") || input.get<Object>().count("$anchor"));
-  };
-  // An ID in an unrelated definition does not change this conjunction's scope.
-  if ((defines_scope(left_input) || defines_scope(right_input)) &&
+  if ((HasSchemaKeyword(left_input, "$id") || HasSchemaKeyword(right_input, "$id") ||
+       HasSchemaKeyword(left_input, "$anchor") || HasSchemaKeyword(right_input, "$anchor")) &&
       (HasSchemaKeyword(left_input, "$ref") || HasSchemaKeyword(right_input, "$ref")))
     throw std::runtime_error("resource-scoped reference conjunctions are unsupported");
   Value left = Collapse(left_input), right = Collapse(right_input);
