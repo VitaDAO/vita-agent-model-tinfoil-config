@@ -18,7 +18,7 @@ models:
 
 containers:
   - name: sglang
-    image: ghcr.io/vitadao/vita-agent-model-sglang@sha256:6bac34322a6974d03b93c2ff8fa0cdc96510b4a7c31df78334983c2244ef8ae2
+    image: ghcr.io/vitadao/vita-agent-model-sglang@sha256:47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08
     runtime: nvidia
     gpus: all
     ipc: host
@@ -27,6 +27,7 @@ containers:
       - HF_HUB_OFFLINE: '1'
       - TRANSFORMERS_OFFLINE: '1'
       - PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      - SGLANG_MAX_THINK_TOKENS: '4096'
     command:
       - python3
       - -m
@@ -40,6 +41,7 @@ containers:
       - fp8
       - --reasoning-parser
       - qwen3
+      - --enable-strict-thinking
       - --tool-call-parser
       - qwen3_coder
       - --speculative-algorithm

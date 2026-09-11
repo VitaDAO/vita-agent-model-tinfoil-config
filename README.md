@@ -1,75 +1,60 @@
-# vita-agent-model-tinfoil-config
+# vita-agent-model
 
-Attestation anchor for the `vita-agent-model` enclave on the control.inf6 H200.
+Tinfoil configuration and serving-image source for the `fable-distill` endpoint.
+The release configuration in `tinfoil-config.yml` serves **Fable Distill FP8 with
+DFlash2**, using eight draft tokens on one confidential H200. It uses SGLang;
+the alternative llama.cpp and NEXTN configuration files are historical examples,
+not the active release configuration.
 
-Serves [`DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-MTP`](https://huggingface.co/DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-MTP)
-behind an OpenAI-compatible API.
+## Model and runtime identity
 
-## Two configs
+- Target: `alexdobrin/Qwen3.8-27B-Fable-Distill-FP8@dad2544d418ffb797af211fb49e4dd770af8e33f`
+- Draft: `incoai/Qwen3.8-27B-DFlash2@dedf8df68adfb1afeaf7b7480c0a0243108177b4`
+- Serving image: `ghcr.io/vitadao/vita-agent-model-sglang@sha256:47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`
+- Image source: `9ebdc612db3fd351457dbe96991bf9e331f31ace`
+- API model ID: `fable-distill`; context: 262,144 tokens; concurrency: 16 slots.
+- Host allocation: eight CPUs, one H200, 128 GiB RAM; confidential computing on.
 
-| file | runtime | weights | concurrency |
-|---|---|---|---|
-| `tinfoil-config.yml` | llama.cpp | GGUF MTP-Q8_0 (30.2 GB of a 465 GB wrap) | **1 request** |
-| `tinfoil-config.sglang.yml` | SGLang | BF16 safetensors (55.6 GB) | 16 requests |
+The image corrects the JSON-schema compiler and supplies the caller's original
+JSON response contract to the model renderer. The launch configuration enables
+native strict thinking with a default 4,096-token reasoning limit. This keeps
+room for the final answer when callers provide an adequate total token budget;
+it does not change model weights or repair generated output. See
+[the serving contract and release evidence](docs/schema-compiler.md).
 
-`tinfoil-config.yml` is active because the GGUF is what is currently wrapped.
-SGLang cannot load GGUF and vLLM's GGUF path does not cover this hybrid
-Gated-DeltaNet arch, so llama.cpp is the only runtime that reads that artifact —
-and its MTP support ([#22673](https://github.com/ggml-org/llama.cpp/pull/22673))
-is limited to a single server slot, hence `-np 1`.
+## Verification and known limitations
 
-To switch: wrap `DavidAU/…-NM-DAU-MTP` at commit `5fdc5e47…` in the dashboard,
-paste the `mpk` and its root hash into `tinfoil-config.sglang.yml`, swap it over
-`tinfoil-config.yml`, then tag. Both expose the same paths and both return
-thinking in `message.reasoning_content`, so callers need no changes.
+This exact image/configuration was exercised as test release `v0.5.95` on
+September 11, 2026. All 30 original synthetic outputs completed and conformed to
+the contract; 28/30 also met the probe's requested-answer criteria. Two named-tool
+answers returned acknowledgments instead of the requested substantive answer.
+The matched five-pass benchmark median was 127.5 tokens/sec versus 162.2 baseline
+(21.4% slower), so the original 10% speed-regression target was not met.
+The principal directed production promotion after these results were disclosed.
+This is not a clean quality/performance pass. Streaming, concurrent contract
+isolation, and default/per-request reasoning-limit checks passed.
 
-## Deploying
+The generic strict-thinking path adds grammar processing to ordinary responses;
+its performance cost remains a follow-up. Application-level factual accuracy,
+recall, and the application's 20-prompt battery are separate acceptance work.
 
-Tagging `v*.*.*` runs `tinfoilsh/pri-build-action`, publishing the release that
-Tinfoil verifies at deploy time.
+## Deploying and connecting
+
+Tags matching `v*.*.*` build and attest a configuration release. Tag publication
+does not select a running version. Use the approved exact tag with the existing
+`vita-agent-model` container, then verify its live attestation and health.
+Check the live version with `tinfoil container get vita-agent-model`; a repository
+commit or test release alone is not production deployment proof.
 
 ```sh
-tinfoil container create vita-agent-model \
-  --repo VitaDAO/vita-agent-model-tinfoil-config \
-  --tag v0.1.0
+tinfoil container connect vita-agent-model -b 127.0.0.1 -p 3301
+python3 bench_enclave.py --base-url http://127.0.0.1:3301/v1 --model fable-distill --passes 5 --max-tokens 2000
 ```
 
-Later releases roll out with `tinfoil container relaunch vita-agent-model --tag <tag>`.
+The proxy verifies the enclave's attestation before forwarding requests. Keep
+certificate and attestation verification enabled. See [USAGE.md](USAGE.md) for
+request-level reasoning budgets and the distinction from older measurements.
 
-## Benchmarking
-
-```sh
-tinfoil container connect vita-agent-model -p 3301
-python3 bench_enclave.py
-```
-
-Reports TTFT, decode tok/s, and MTP draft-acceptance counters from `/metrics`.
-
-## Sampler settings
-
-The author's recommended values. Callers must send these explicitly — the server
-does not read them from the repo:
-
-| | thinking | thinking (code) | non-thinking |
-|---|---|---|---|
-| temperature | 1.0 | 0.6 | 0.7 |
-| top_p | 0.95 | 0.95 | 0.80 |
-| top_k | 20 | 20 | 20 |
-| min_p | 0.0 | 0.0 | 0.0 |
-| presence_penalty | 0.0 | 0.0 | 1.5 |
-| repetition_penalty | 1.0 | 1.0 | 1.0 |
-
-**MTP constraint:** keep `temperature <= 1.0` and `repetition_penalty` at `1.0`.
-Raising either collapses draft-token acceptance and speculative decoding turns
-into a net loss. Below ~50% acceptance the non-MTP quants are faster. Disable
-thinking per-request with `chat_template_kwargs: {"enable_thinking": false}`.
-
-## Notes
-
-- 27B dense Gated-DeltaNet, 64 layers, `full_attention_interval` 4, head_dim 256.
-  1199 tensors including 15 `mtp.*` — the MTP head is what makes speculative
-  decoding available in both runtimes.
-- The model also carries 333 vision tensors. Both configs run text-only.
-- This is an uncensored/abliterated merge (refusals 4/100 against 99/100 for the
-  base). It has no safety behaviour of its own; guardrails must live in the
-  calling application.
+The old `v0.10.0` release is retained for recovery, but must not be automatically
+restarted against the principal's explicit direction to replace it. Recovery
+must use a recorded, authorized action for the intended production container.

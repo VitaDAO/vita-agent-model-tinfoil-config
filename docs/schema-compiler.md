@@ -65,8 +65,8 @@ file hashes. The resulting package version is `0.2.1+vita3`.
 It builds and tests the compiler, replaces its wheel in the runtime, and tests
 the installed Python binding plus SGLang's nonstreaming/incremental Qwen parser.
 It also applies the hash-checked rendering correction to pinned SGLang source
-and runs the rendering tests against that installed source. Model packages and
-launch flags remain unchanged. These installed-image checks require a Linux image
+and runs the rendering tests against that installed source. Model packages remain unchanged. The configuration additionally enables native
+strict thinking and a 4,096-token reasoning budget, as documented below. These installed-image checks require a Linux image
 build; local C++ tests do not substitute for them.
 
 The dedicated workflow runs native checks on a PR. Image publication is manual
@@ -79,7 +79,8 @@ Before release:
 1. Finish independent review, Linux native checks and the installed-image build.
 2. Record source revision, image digest, test configuration/enclave and rollback.
 3. On a separate H200 test enclave, keep target/draft weights, DFlash, scheduling
-   and sampling identical to the current server. Change the serving image only.
+   and sampling identical to the baseline. Separately record the native thinking
+   configuration experiment and its quality/performance results.
 4. Run the unchanged handoff probe A–F five times each with default thinking;
    also inspect required-tool and streaming behavior. No partial-JSON repair.
 5. Run the same single-stream protocol as the baseline. Decode throughput must
@@ -87,13 +88,13 @@ Before release:
    compiler timings are not inference-speed evidence.
 6. Record the principal's release authorization, pin/attest the
    tested digest, select the new tag with Tinfoil CLI, then verify attestation,
-   health, and synthetic smokes. Retain live `v0.10.0` as the recorded rollback
-   until the target is rechecked immediately before release.
+   health, and synthetic smokes. Retain `v0.10.0` as a recovery artifact; it is
+   stopped by principal direction and must not be restarted automatically.
 
-No replacement has been promoted to the main model endpoint. Ordinary Vita Agent final calls currently do
-not request strict decoding; their separate opt-in follows successful server
-acceptance. This task does not promise to remove every application timeout,
-unsupported inference, or recall failure.
+Production promotion is proven by the recorded live attestation and synthetic smoke,
+not a source commit. Clients that do not request strict decoding must opt in to use
+contract enforcement. This task does not promise to remove every application
+timeout, unsupported inference, or recall failure.
 
 A `compiler-build-*` tag can explicitly build an immutable candidate from a reviewed task commit before this workflow reaches the default branch. This tag does not match the Tinfoil attestation workflow's `v*.*.*` trigger and does not deploy or select a model release. PR runs remain verification-only.
 
@@ -101,9 +102,9 @@ A `compiler-build-*` tag can explicitly build an immutable candidate from a revi
 
 Conjunctions that contain both resource identifiers (`$id`/`$anchor`) and references are rejected, including identifiers in unused definitions. The pinned resolver has no resource-scope stack; attempting to exempt apparently unrelated identifiers admitted incorrect values through reachable definitions. This conservative rejection is intentional until resource-aware resolution is implemented separately. Ordinary references without resource identifiers and identifier-bearing finite values remain supported. The original Vita answer contract contains no resource identifiers, so this boundary does not restrict its acceptance cases.
 
-Review disposition: the request to accept unused identifier/reference combinations is deferred as a compatibility extension. Reverting that extension fixes the demonstrated invalid-value acceptance. The reviewed serving source remains `202db8d`; any subsequent documentation-only or integration commit must preserve the compiler/image identity.
+Review disposition: the request to accept unused identifier/reference combinations is deferred as a compatibility extension. Reverting that extension fixes the demonstrated invalid-value acceptance. The current image source is `9ebdc612db3fd351457dbe96991bf9e331f31ace`; subsequent configuration/documentation commits preserve that image identity.
 
-### Live findings on September 11
+### Earlier compiler and renderer diagnostics on September 11
 
 The compiler-only test image was attested and exercised on H200 with DFlash.
 The original short contract passed 0/5 on the baseline and 4/5 on the
@@ -125,5 +126,42 @@ they are not a clinical-quality oracle. The acceptance gate is not relaxed.
 before editing. `tests/serving/test_response_contract.py <serving_chat.py>` runs
 the production Jinja and continuation methods with a recording tokenizer. Four
 checks fail on unmodified pinned source; all six pass with contract delivery.
-This proves rendering, not successful GPU completion. The original tool schema,
-thinking configuration and sampling parameters are unchanged for the next test.
+Those tests prove rendering, not successful GPU completion. The later H200
+results and native thinking configuration are recorded below.
+
+## Production-directed configuration after test v0.5.95
+
+The tested configuration is test repository commit
+`7cf1e5e5fb5538de05b17094823d36f1cc7f4e43`, tag `v0.5.95`. This release copies its
+configuration exactly, including image digest
+`47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`,
+`--enable-strict-thinking`, and `SGLANG_MAX_THINK_TOKENS=4096`.
+Pinned SGLang is `db272201a2dbd72e5699e443240a851f1313ad45`.
+The target, draft, eight speculative tokens, H200 allocation, scheduling and
+sampling settings remain unchanged.
+
+The unchanged A-F probe returned 28/30 passes. All 30 outputs were complete and
+contract-valid; two F answers contained only an acknowledgment rather than six
+to eight blocks. None exhausted the 7,000-token total budget. Several D/F
+requests reached the native reasoning boundary and then produced valid final
+answers. The usage counter includes the closing marker (4,097 reasoning tokens).
+Explicit request budgets of 32 and 128 tokens also ended thinking correctly and
+returned valid JSON. Streaming and two simultaneous distinct contracts passed.
+
+The matched benchmark median was 127.5 tokens/sec versus 162.2 baseline:
+21.4% slower, outside the original 10% target. Strict thinking creates a grammar
+object even for otherwise unconstrained requests; tracing and removing that
+additional cost is follow-up work. The source-only compiler/rendering image
+with prior launch settings measured 161.7 tokens/sec but still allowed a
+request to exhaust its thinking budget.
+
+These failed instruction-following and speed targets are retained in the record.
+After their disclosure, the principal directed this candidate to be the new
+production model. This is a directed release with known limitations, not a claim
+that the original acceptance gates passed. See task #3 for the active message
+receipt, production commit/tag/attestation, and final live verification.
+
+No application client schema, source data, model weights, or sampling settings
+are changed by this promotion. Strict contract enforcement applies when the
+caller requests JSON-schema/strict tool decoding. It does not establish factual
+accuracy or clinical applicability of an otherwise well-formed answer.
