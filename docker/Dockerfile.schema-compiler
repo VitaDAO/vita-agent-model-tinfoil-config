@@ -1,0 +1,28 @@
+# Keep the current SGLang, CUDA, target/draft model integration and sampling path.
+# The native compiler and response-contract rendering are the only runtime changes.
+FROM lmsysorg/sglang:nightly-dev-cu13-20260909-db272201@sha256:64e4914593690fbba806f19ac8b2237f78815e9046dd2fc874f630129f281607 AS compiler
+USER root
+RUN python3 -m pip install --no-cache-dir \
+    cmake==3.31.10 ninja==1.11.1.4 scikit-build-core==0.10.7
+COPY scripts/build_schema_compiler.py /candidate/scripts/build_schema_compiler.py
+COPY docker/schema-compiler /candidate/docker/schema-compiler
+COPY tests/native /candidate/tests/native
+RUN python3 /candidate/scripts/build_schema_compiler.py --work-dir /compiler-build --wheel
+
+FROM lmsysorg/sglang:nightly-dev-cu13-20260909-db272201@sha256:64e4914593690fbba806f19ac8b2237f78815e9046dd2fc874f630129f281607
+USER root
+COPY --from=compiler /compiler-build/wheels/ /tmp/compiler-wheels/
+COPY --from=compiler /compiler-build/compiler-build.json /opt/vita-schema-compiler/build.json
+COPY --from=compiler /compiler-build/source/LICENSE /opt/vita-schema-compiler/LICENSE.xgrammar
+RUN python3 -m pip install --no-cache-dir --no-deps --force-reinstall /tmp/compiler-wheels/*.whl \
+    && rm -rf /tmp/compiler-wheels
+COPY tests/native/schema_contract_cases.json /opt/vita-schema-compiler/tests/schema_contract_cases.json
+COPY tests/serving/check_installed_compiler.py /opt/vita-schema-compiler/tests/check_installed_compiler.py
+RUN python3 /opt/vita-schema-compiler/tests/check_installed_compiler.py
+COPY scripts/install_response_contract.py /opt/vita-schema-compiler/install_response_contract.py
+COPY tests/serving/test_response_contract.py /opt/vita-schema-compiler/tests/test_response_contract.py
+RUN python3 /opt/vita-schema-compiler/install_response_contract.py \
+    && python3 /opt/vita-schema-compiler/tests/test_response_contract.py \
+       "$(python3 -c 'import importlib.util; from pathlib import Path; print(Path(importlib.util.find_spec("sglang").origin).parent / "srt/entrypoints/openai/serving_chat.py")')"
+# Configuration, model packages and launch command remain in tinfoil-config.yml.
+# This Dockerfile alone neither selects a release nor restarts an enclave.

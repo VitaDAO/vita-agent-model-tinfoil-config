@@ -1,13 +1,28 @@
 # vita-agent-model — usage guide
 
+> September 11 serving update: the release configuration now has a native
+> 4,096-token thinking limit. Thinking remains enabled by default. For a smaller
+> total `max_tokens`, supply a smaller `custom_params.thinking_budget` to reserve
+> final-answer space, or explicitly disable thinking. The cap is not a guarantee
+> that any requested answer fits any output budget. The 32/128 per-request limits
+> were tested live. Historical throughput/quality measurements below predate this
+> configuration; the current matched median is 127.5 tokens/sec, with known
+> instruction-following limitations. See README.md and docs/schema-compiler.md.
+>
+> Example with room reserved for the answer:
+> `max_tokens=3000, extra_body={"custom_params": {"thinking_budget": 1024}}`
+> Only the 32/128 explicit budgets and 4,096 default were measured in this release;
+> the 1,024 example shows the supported request syntax.
+
+
 Confidential (TEE) inference endpoint serving **Qwen3.8-27B-Fable-Distill** in FP8 on a single
-H200. Everything below is measured on this deployment, not estimated.
+H200. The historical measurements below describe the earlier deployment; the update above supersedes its serving defaults and speed claims.
 
 - **Model id:** `fable-distill`
 - **Endpoint:** `https://vita-agent-model.vitality-now.containers.tinfoil.dev`
 - **API:** OpenAI-compatible (`/v1/chat/completions`, `/v1/completions`, `/v1/models`)
 - **Auth:** none — authentication is attestation-based, via the verified proxy
-- **Context:** 262,144 tokens · **Concurrency:** 16 slots · **Live config:** tag `v0.6.1`
+- **Context:** 262,144 tokens · **Concurrency:** 16 slots · **Historical measurement config:** tag `v0.6.1`
 
 ---
 
@@ -182,8 +197,8 @@ Images bill as prompt tokens — check `usage.prompt_tokens_details.image_tokens
 - **Vision is ON** — no flag needed, see section 7b.
 - **Restarts cost ~20 minutes** (dm-verity verification of the 28.8 GiB model artifact, weight
   load, CUDA-graph capture). It is not a service you bounce casually.
-- **Rollback:** `tinfoil container start vita-agent-model --tag v0.6.1` restores this exact
-  configuration; `tinfoil-config.nextn.yml` is the same config kept in-repo for reference.
+- **Recovery:** use the exact authorized production release recorded in task #3.
+  `v0.6.1` and `tinfoil-config.nextn.yml` are historical; do not deploy them from this guide.
 - **Metrics:** `/metrics` exposes `sglang:spec_accept_length`, but it resets every 40 decode
   iterations — read `meta_info.spec_accept_length` per request instead for anything meaningful.
 - **Model provenance:** FP8 quantization was produced in-house from the BF16 weights using Qwen's

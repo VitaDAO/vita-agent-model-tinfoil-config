@@ -1,7 +1,21 @@
 # Prompting guide — `fable-distill`
 
-How to get good output from this endpoint. Every claim here was tested against the live
-deployment; see `USAGE.md` for connection details and `speed_experiments.md` for the speed work.
+> September 11 serving update: the release configuration now has a native
+> 4,096-token thinking limit. Thinking remains enabled by default. For a smaller
+> total `max_tokens`, supply a smaller `custom_params.thinking_budget` to reserve
+> final-answer space, or explicitly disable thinking. The cap is not a guarantee
+> that any requested answer fits any output budget. The 32/128 per-request limits
+> were tested live. Historical throughput/quality measurements below predate this
+> configuration; the current matched median is 127.5 tokens/sec, with known
+> instruction-following limitations. See README.md and docs/schema-compiler.md.
+>
+> Example with room reserved for the answer:
+> `max_tokens=3000, extra_body={"custom_params": {"thinking_budget": 1024}}`
+> Only the 32/128 explicit budgets and 4,096 default were measured in this release;
+> the 1,024 example shows the supported request syntax.
+
+
+How to get good output from this endpoint. The historical measurements below were taken against an earlier deployment; see `USAGE.md` for connection details and `speed_experiments.md` for the speed work.
 
 The model is **Qwen3.8-27B-Fable-Distill**: a Fable-5-distilled fine-tune of Qwen3.8-27B, served
 in FP8 with 256k context and vision enabled.
