@@ -25,14 +25,68 @@ inline bool IsAnnotation(const std::string& k) {
          k == "$comment" || k == "$schema" || k == "deprecated" || k == "readOnly" ||
          k == "writeOnly";
 }
+// Identifiers do not restrict finite values, but are not identity conjuncts:
+// a resource ID can change the meaning of a reference in another conjunct.
+inline bool IsIdentifier(const std::string& k) { return k == "$id" || k == "$anchor"; }
+// Walk schema-valued keywords only; const/enum/default/examples are instance data.
+inline bool HasSchemaKeyword(const Value& v, const std::string& keyword) {
+  if (!v.is<Object>()) return false;
+  const auto& o = v.get<Object>();
+  if (o.count(keyword)) return true;
+  for (const auto& key :
+       {"items",
+        "additionalItems",
+        "additionalProperties",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "contains",
+        "propertyNames",
+        "not",
+        "if",
+        "then",
+        "else"})
+    if (o.count(key) && HasSchemaKeyword(o.at(key), keyword)) return true;
+  for (const auto& key : {"anyOf", "oneOf", "allOf", "prefixItems"})
+    if (o.count(key) && o.at(key).is<Array>())
+      for (const auto& child : o.at(key).get<Array>())
+        if (HasSchemaKeyword(child, keyword)) return true;
+  for (const auto& key :
+       {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"})
+    if (o.count(key) && o.at(key).is<Object>())
+      for (const auto& entry : o.at(key).get<Object>())
+        if (HasSchemaKeyword(entry.second, keyword)) return true;
+  return false;
+}
 inline bool IsNumber(const Value& v) { return v.is<int64_t>() || v.is<double>(); }
 inline long double Number(const Value& v) {
   if (!IsNumber(v)) throw std::runtime_error("expected a numeric schema bound");
   return v.is<int64_t>() ? static_cast<long double>(v.get<int64_t>()) : v.get<double>();
 }
+// Preserve integer identity even where long double has only 53 mantissa bits.
+inline int CompareNumbers(const Value& a, const Value& b) {
+  if (!IsNumber(a) || !IsNumber(b)) throw std::runtime_error("expected numbers");
+  if (a.is<int64_t>() && b.is<int64_t>()) {
+    const auto x = a.get<int64_t>(), y = b.get<int64_t>();
+    return (x > y) - (x < y);
+  }
+  if (a.is<int64_t>()) {
+    const auto x = a.get<int64_t>();
+    const double y = b.get<double>();
+    // Check the conversion range before truncating the finite JSON number.
+    if (y >= 9223372036854775808.0) return -1;
+    if (y < -9223372036854775808.0) return 1;
+    const auto truncated = static_cast<int64_t>(y);
+    if (x != truncated) return (x > truncated) - (x < truncated);
+    const double integral = static_cast<double>(truncated);
+    return (integral > y) - (integral < y);
+  }
+  if (b.is<int64_t>()) return -CompareNumbers(b, a);
+  const auto x = a.get<double>(), y = b.get<double>();
+  return (x > y) - (x < y);
+}
 // JSON Schema compares numbers by value, not by their JSON spelling (1 == 1.0).
 inline bool Equal(const Value& a, const Value& b) {
-  if (IsNumber(a) && IsNumber(b)) return Number(a) == Number(b);
+  if (IsNumber(a) && IsNumber(b)) return CompareNumbers(a, b) == 0;
   if (a.is<Array>() && b.is<Array>()) {
     const auto& x = a.get<Array>();
     const auto& y = b.get<Array>();
@@ -98,9 +152,9 @@ inline Value FilterFinite(const Object& schema) {
   else
     throw std::runtime_error("finite schema requires enum or const");
   for (const auto& [k, ignored] : schema) {
-    if (IsAnnotation(k) || k == "$defs" || k == "definitions" || k == "enum" || k == "const" ||
-        k == "type" || k == "minimum" || k == "maximum" || k == "exclusiveMinimum" ||
-        k == "exclusiveMaximum" || k == "minLength" || k == "maxLength")
+    if (IsAnnotation(k) || IsIdentifier(k) || k == "$defs" || k == "definitions" || k == "enum" ||
+        k == "const" || k == "type" || k == "minimum" || k == "maximum" ||
+        k == "exclusiveMinimum" || k == "exclusiveMaximum" || k == "minLength" || k == "maxLength")
       continue;
     throw std::runtime_error("unsupported finite schema conjunction: " + k);
   }
@@ -109,11 +163,14 @@ inline Value FilterFinite(const Object& schema) {
     if (schema.count("const") && !Equal(value, schema.at("const"))) continue;
     if (schema.count("type") && !HasType(value, schema.at("type"))) continue;
     if (IsNumber(value)) {
-      const auto n = Number(value);
-      if (schema.count("minimum") && n < Number(schema.at("minimum"))) continue;
-      if (schema.count("maximum") && n > Number(schema.at("maximum"))) continue;
-      if (schema.count("exclusiveMinimum") && n <= Number(schema.at("exclusiveMinimum"))) continue;
-      if (schema.count("exclusiveMaximum") && n >= Number(schema.at("exclusiveMaximum"))) continue;
+      if (schema.count("minimum") && CompareNumbers(value, schema.at("minimum")) < 0) continue;
+      if (schema.count("maximum") && CompareNumbers(value, schema.at("maximum")) > 0) continue;
+      if (schema.count("exclusiveMinimum") &&
+          CompareNumbers(value, schema.at("exclusiveMinimum")) <= 0)
+        continue;
+      if (schema.count("exclusiveMaximum") &&
+          CompareNumbers(value, schema.at("exclusiveMaximum")) >= 0)
+        continue;
     }
     if (value.is<std::string>()) {
       const auto& text = value.get<std::string>();
@@ -193,14 +250,14 @@ inline void CheckConjunct(const Value& v) {
   if (!v.is<Object>()) return;
   for (const auto& [key, ignored] : v.get<Object>()) {
     if (key == "prefixItems") throw std::runtime_error("tuple schema conjunctions are unsupported");
-    if (IsAnnotation(key) || key == "$defs" || key == "definitions" || key == "type" ||
-        key == "properties" || key == "required" || key == "additionalProperties" ||
-        key == "items" || key == "prefixItems" || key == "contains" || key == "minContains" ||
-        key == "maxContains" || key == "anyOf" || key == "oneOf" || key == "allOf" ||
-        key == "enum" || key == "const" || key == "minimum" || key == "maximum" ||
-        key == "exclusiveMinimum" || key == "exclusiveMaximum" || key == "minItems" ||
-        key == "maxItems" || key == "minLength" || key == "maxLength" || key == "minProperties" ||
-        key == "maxProperties")
+    if (IsAnnotation(key) || IsIdentifier(key) || key == "$defs" || key == "definitions" ||
+        key == "type" || key == "properties" || key == "required" ||
+        key == "additionalProperties" || key == "items" || key == "prefixItems" ||
+        key == "contains" || key == "minContains" || key == "maxContains" || key == "anyOf" ||
+        key == "oneOf" || key == "allOf" || key == "enum" || key == "const" || key == "minimum" ||
+        key == "maximum" || key == "exclusiveMinimum" || key == "exclusiveMaximum" ||
+        key == "minItems" || key == "maxItems" || key == "minLength" || key == "maxLength" ||
+        key == "minProperties" || key == "maxProperties")
       continue;
     throw std::runtime_error("unsupported schema conjunction keyword: " + key);
   }
@@ -221,6 +278,12 @@ inline Value Collapse(const Value& v) {
 }
 
 inline Value Conjoin(const Value& left_input, const Value& right_input) {
+  // The upstream resolver has one root document, not a resource-scope stack.
+  // Keep scoped references unsupported even when nested inside an alternative.
+  if ((HasSchemaKeyword(left_input, "$id") || HasSchemaKeyword(right_input, "$id") ||
+       HasSchemaKeyword(left_input, "$anchor") || HasSchemaKeyword(right_input, "$anchor")) &&
+      (HasSchemaKeyword(left_input, "$ref") || HasSchemaKeyword(right_input, "$ref")))
+    throw std::runtime_error("resource-scoped reference conjunctions are unsupported");
   Value left = Collapse(left_input), right = Collapse(right_input);
   if (IsFalse(left) || IsFalse(right)) return Value(false);
   if (IsIdentity(left)) return right;
@@ -328,10 +391,10 @@ inline Value Conjoin(const Value& left_input, const Value& right_input) {
       prior = Conjoin(prior, value);
     } else if (key == "minimum" || key == "exclusiveMinimum" || key == "minItems" ||
                key == "minLength" || key == "minProperties") {
-      if (Number(value) > Number(prior)) prior = value;
+      if (CompareNumbers(value, prior) > 0) prior = value;
     } else if (key == "maximum" || key == "exclusiveMaximum" || key == "maxItems" ||
                key == "maxLength" || key == "maxProperties") {
-      if (Number(value) < Number(prior)) prior = value;
+      if (CompareNumbers(value, prior) < 0) prior = value;
     } else if (key == "const") {
       if (!Equal(prior, value)) return Value(false);
     } else if (key == "type") {

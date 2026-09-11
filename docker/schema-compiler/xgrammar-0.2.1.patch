@@ -1,5 +1,5 @@
 diff --git a/cpp/json_schema_converter.cc b/cpp/json_schema_converter.cc
-index 5f5ed77..a8e542e 100644
+index 5f5ed77..909de1f 100644
 --- a/cpp/json_schema_converter.cc
 +++ b/cpp/json_schema_converter.cc
 @@ -13,6 +13,7 @@
@@ -370,7 +370,7 @@ index 5f5ed77..a8e542e 100644
      }
    }
  
-@@ -895,27 +1130,31 @@ Result<AnyOfSpec, SchemaError> SchemaParser::ParseAnyOf(const picojson::object&
+@@ -895,27 +1130,34 @@ Result<AnyOfSpec, SchemaError> SchemaParser::ParseAnyOf(const picojson::object&
      );
    }
    int idx = 0;
@@ -389,6 +389,9 @@ index 5f5ed77..a8e542e 100644
 +      return ResultErr(std::move(error));
 +    }
 +    if (std::string(anyof_key) == "oneOf") {
++      // Exclusivity is supported only when proved from the literal alternatives.
++      // Referenced/recursive alternatives remain explicitly unsupported: the
++      // upstream oneOf-as-anyOf behavior cannot establish exact-one semantics.
 +      for (const auto& prior : alternatives)
 +        if (!schema_conjunction::Disjoint(prior, complete))
 +          throw std::runtime_error("oneOf alternatives must be provably disjoint");
@@ -419,7 +422,7 @@ index 5f5ed77..a8e542e 100644
    return ResultOk(std::move(spec));
  }
  
-@@ -941,9 +1180,17 @@ Result<TypeArraySpec, SchemaError> SchemaParser::ParseTypeArray(
+@@ -941,9 +1183,17 @@ Result<TypeArraySpec, SchemaError> SchemaParser::ParseTypeArray(
      schema_copy["type"] = type;
      auto type_result =
          Parse(picojson::value(schema_copy), rule_name_hint + "_" + type.get<std::string>());
@@ -438,7 +441,7 @@ index 5f5ed77..a8e542e 100644
    return ResultOk(std::move(spec));
  }
  
-@@ -1422,9 +1669,45 @@ std::string JSONSchemaConverter::GenerateNull(const NullSpec& spec, const std::s
+@@ -1422,9 +1672,45 @@ std::string JSONSchemaConverter::GenerateNull(const NullSpec& spec, const std::s
    return "\"null\"";
  }
  
@@ -484,7 +487,7 @@ index 5f5ed77..a8e542e 100644
    indent_manager_.StartIndent();
  
    auto start_separator = indent_manager_.StartSeparator();
-@@ -2163,8 +2446,7 @@ std::string JSONSchemaConverter::GenerateAllOf(
+@@ -2163,8 +2449,7 @@ std::string JSONSchemaConverter::GenerateAllOf(
    if (spec.schemas.size() == 1) {
      return GenerateFromSpec(spec.schemas[0], rule_name + "_case_0");
    }

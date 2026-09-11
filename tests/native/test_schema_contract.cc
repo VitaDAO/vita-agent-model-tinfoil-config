@@ -299,4 +299,46 @@ TEST(ServingSchemaContract, FinalReviewContainerAndTypeBoundaries) {
       R"("ok")"
   ));
 }
+
+TEST(ServingSchemaContract, MetadataAndExactIntegerIdentity) {
+  EXPECT_TRUE(Accepts(
+      R"({"$id":"https://example.com/color","$anchor":"Color","type":"string","enum":["red","blue"]})",
+      R"("red")"
+  ));
+  EXPECT_TRUE(Accepts(
+      R"({"$id":"https://example.com/color","anyOf":[{"const":"red"},{"const":"blue"}]})",
+      R"("blue")"
+  ));
+  EXPECT_TRUE(Accepts(
+      R"({"oneOf":[{"const":9007199254740992},{"const":9007199254740993}]})", "9007199254740993"
+  ));
+  const std::string array =
+      R"({"type":"array","items":{"enum":[9007199254740992,9007199254740993]},"contains":{"const":9007199254740993}})";
+  EXPECT_TRUE(Accepts(array, "[9007199254740993]"));
+  EXPECT_FALSE(Accepts(array, "[9007199254740992]"));
+  EXPECT_THROW(
+      Accepts(R"({"enum":[9007199254740992],"minimum":9007199254740993})", "9007199254740992"),
+      std::exception
+  );
+}
+
+TEST(ServingSchemaContract, ScopedReferencesRemainUnsupported) {
+  EXPECT_THROW(
+      Accepts(
+          R"({"type":"object","$defs":{"X":{"const":"outer"}},"properties":{"child":{"$id":"https://example.com/child","$defs":{"X":{"const":"inner"}},"anyOf":[{"$ref":"#/$defs/X"}]}},"required":["child"],"additionalProperties":false})",
+          R"({"child":"outer"})"
+      ),
+      std::exception
+  );
+}
+
+TEST(ServingSchemaContract, DescendantScopedReferencesRemainUnsupported) {
+  for (const std::string op : {"anyOf", "allOf"}) {
+    const std::string schema =
+        R"({"type":"object","$defs":{"X":{"const":"outer"}},"properties":{"child":{"$id":"https://example.com/child","$defs":{"X":{"const":"inner"}},")" +
+        op +
+        R"(":[{"type":"object","properties":{"x":{"$ref":"#/$defs/X"}},"required":["x"],"additionalProperties":false}]}},"required":["child"],"additionalProperties":false})";
+    EXPECT_THROW(Accepts(schema, R"({"child":{"x":"outer"}})"), std::exception);
+  }
+}
 }  // namespace
