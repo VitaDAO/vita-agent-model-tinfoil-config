@@ -341,4 +341,11 @@ TEST(ServingSchemaContract, DescendantScopedReferencesRemainUnsupported) {
     EXPECT_THROW(Accepts(schema, R"({"child":{"x":"outer"}})"), std::exception);
   }
 }
+
+TEST(ServingSchemaContract, UnusedResourceIdentifierDoesNotChangeReferenceScope) {
+  EXPECT_TRUE(Accepts(
+      R"({"$defs":{"Unused":{"$id":"https://example.com/unused"},"X":{"type":"integer"}},"anyOf":[{"$ref":"#/$defs/X"}]})",
+      "3"
+  ));
+}
 }  // namespace
