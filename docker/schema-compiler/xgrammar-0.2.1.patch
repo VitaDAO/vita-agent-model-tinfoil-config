@@ -1,0 +1,521 @@
+diff --git a/cpp/json_schema_converter.cc b/cpp/json_schema_converter.cc
+index 5f5ed77..a8e542e 100644
+--- a/cpp/json_schema_converter.cc
++++ b/cpp/json_schema_converter.cc
+@@ -13,6 +13,7 @@
+ #include <cstdint>
+ #include <iomanip>
+ #include <limits>
++#include <map>
+ #include <sstream>
+ #include <string>
+ #include <unordered_map>
+@@ -23,6 +24,7 @@
+ 
+ #include "json_schema_converter_ext.h"
+ #include "regex_converter.h"
++#include "schema_conjunction.h"
+ #include "support/logging.h"
+ #include "support/utils.h"
+ 
+@@ -140,6 +142,120 @@ enum class SchemaErrorType : int {
+ 
+ using SchemaError = TypedError<SchemaErrorType>;
+ 
++struct ContainsGraph {
++  struct Edge {
++    size_t value;
++    size_t next;
++  };
++  std::vector<std::string> values;
++  std::vector<std::vector<Edge>> edges;
++  std::vector<bool> accepting;
++  std::vector<bool> productive;
++  std::vector<bool> first;
++};
++
++std::optional<ContainsGraph> BuildContainsGraph(const ArraySpec& spec) {
++  if (!spec.prefix_items.empty() || !spec.additional_items)
++    throw std::runtime_error("contains currently requires finite enum items without prefixItems");
++  std::vector<std::string> values;
++  if (const auto* items = std::get_if<EnumSpec>(&spec.additional_items->spec)) {
++    values = items->json_values;
++  } else if (const auto* item = std::get_if<ConstSpec>(&spec.additional_items->spec)) {
++    values.push_back(item->json_value);
++  } else {
++    throw std::runtime_error("contains currently requires finite enum or const items");
++  }
++  std::vector<picojson::value> item_values;
++  std::vector<std::vector<picojson::value>> predicate_values;
++  for (const auto& value : values) {
++    picojson::value parsed;
++    if (!picojson::parse(parsed, value).empty()) throw std::runtime_error("invalid enum JSON");
++    item_values.push_back(parsed);
++  }
++  for (const auto& predicate : spec.contains) {
++    predicate_values.emplace_back();
++    for (const auto& value : predicate.json_values) {
++      picojson::value parsed;
++      if (!picojson::parse(parsed, value).empty())
++        throw std::runtime_error("invalid contains JSON");
++      predicate_values.back().push_back(parsed);
++    }
++  }
++  // The finite enum partitions the item language exactly. States count matching
++  // values for each contains predicate independently, including overlapping sets.
++  // Unbounded counters saturate at their required minimum to keep a finite grammar.
++  using State = std::vector<int64_t>;
++  State initial(spec.contains.size() + 1, 0);
++  std::vector<State> states{initial};
++  std::map<State, size_t> ids{{initial, 0}};
++  std::vector<std::vector<ContainsGraph::Edge>> edges;
++  std::vector<bool> accepting;
++  for (size_t i = 0; i < states.size(); ++i) {
++    const auto state = states[i];
++    bool accept = state[0] >= spec.min_items;
++    for (size_t c = 0; c < spec.contains.size(); ++c)
++      accept = accept && state[c + 1] >= spec.contains[c].minimum;
++    accepting.push_back(accept);
++    edges.emplace_back();
++    if (spec.max_items != -1 && state[0] >= spec.max_items) continue;
++    for (size_t v = 0; v < values.size(); ++v) {
++      State next = state;
++      next[0] = spec.max_items == -1 ? std::min(state[0] + 1, std::max<int64_t>(spec.min_items, 1))
++                                     : state[0] + 1;
++      bool legal = true;
++      for (size_t c = 0; c < spec.contains.size(); ++c) {
++        const auto& predicate = spec.contains[c];
++        if (!std::any_of(
++                predicate_values[c].begin(),
++                predicate_values[c].end(),
++                [&](const picojson::value& value) {
++                  return schema_conjunction::Equal(item_values[v], value);
++                }
++            ))
++          continue;
++        auto count = state[c + 1] + 1;
++        if (predicate.maximum != -1 && count > predicate.maximum) {
++          legal = false;
++          break;
++        }
++        next[c + 1] = predicate.maximum == -1 ? std::min(count, predicate.minimum) : count;
++      }
++      if (!legal) continue;
++      auto [it, inserted] = ids.emplace(next, states.size());
++      if (inserted) {
++        if (states.size() >= 65536)
++          throw std::runtime_error("contains grammar exceeds 65536 states");
++        states.push_back(next);
++      }
++      edges[i].push_back({v, it->second});
++    }
++  }
++  auto productive = accepting;
++  bool changed = true;
++  while (changed) {
++    changed = false;
++    for (size_t i = 0; i < states.size(); ++i) {
++      if (productive[i]) continue;
++      for (const auto& edge : edges[i])
++        if (productive[edge.next]) {
++          productive[i] = true;
++          changed = true;
++          break;
++        }
++    }
++  }
++  if (!productive[0]) return std::nullopt;
++  std::vector<bool> first;
++  for (const auto& state : states) first.push_back(state[0] == 0);
++  return ContainsGraph{
++      std::move(values),
++      std::move(edges),
++      std::move(accepting),
++      std::move(productive),
++      std::move(first)
++  };
++}
++
+ /*!
+  * \brief Parser for JSON Schema, converts JSON Schema to SchemaSpec intermediate representation.
+  */
+@@ -178,7 +294,6 @@ class SchemaParser {
+   Result<EnumSpec, SchemaError> ParseEnum(const picojson::object& schema);
+   Result<RefSpec, SchemaError> ParseRef(const picojson::object& schema);
+   Result<AnyOfSpec, SchemaError> ParseAnyOf(const picojson::object& schema);
+-  Result<AllOfSpec, SchemaError> ParseAllOf(const picojson::object& schema);
+   Result<TypeArraySpec, SchemaError> ParseTypeArray(
+       const picojson::object& schema, const std::string& rule_name_hint
+   );
+@@ -296,22 +411,62 @@ Result<SchemaSpecPtr, SchemaError> SchemaParser::Parse(
+     if (ref_result.IsErr()) return ResultErr(std::move(ref_result).UnwrapErr());
+     auto ref_spec = std::move(ref_result).Unwrap();
+     result = SchemaSpec::Make(std::move(ref_spec), cache_key, rule_name_hint);
+-  } else if (schema_obj.count("const")) {
+-    auto const_result = ParseConst(schema_obj);
+-    if (const_result.IsErr()) return ResultErr(std::move(const_result).UnwrapErr());
+-    result = SchemaSpec::Make(std::move(const_result).Unwrap(), cache_key, rule_name_hint);
+-  } else if (schema_obj.count("enum")) {
+-    auto enum_result = ParseEnum(schema_obj);
+-    if (enum_result.IsErr()) return ResultErr(std::move(enum_result).UnwrapErr());
+-    result = SchemaSpec::Make(std::move(enum_result).Unwrap(), cache_key, rule_name_hint);
+   } else if (schema_obj.count("anyOf") || schema_obj.count("oneOf")) {
+     auto anyof_result = ParseAnyOf(schema_obj);
+     if (anyof_result.IsErr()) return ResultErr(std::move(anyof_result).UnwrapErr());
+     result = SchemaSpec::Make(std::move(anyof_result).Unwrap(), cache_key, rule_name_hint);
++  } else if (schema_conjunction::ContainsConjunction(schema_obj)) {
++    if (schema_obj.count("enum") || schema_obj.count("const"))
++      throw std::runtime_error("enum/const with a contains conjunction is unsupported");
++    if (!schema_obj.count("type"))
++      throw std::runtime_error("contains conjunction requires an explicit array type");
++    if (schema_obj.at("type") != picojson::value("array")) {
++      if (!schema_obj.at("type").is<std::string>())
++        throw std::runtime_error("contains conjunction with a type union is unsupported");
++      auto non_array = schema_obj;
++      non_array.erase("allOf");
++      return Parse(picojson::value(non_array), rule_name_hint, default_type);
++    }
++    auto array_result = ParseArray(schema_obj);
++    if (array_result.IsErr()) return ResultErr(std::move(array_result).UnwrapErr());
++    result = SchemaSpec::Make(std::move(array_result).Unwrap(), cache_key, rule_name_hint);
+   } else if (schema_obj.count("allOf")) {
+-    auto allof_result = ParseAllOf(schema_obj);
+-    if (allof_result.IsErr()) return ResultErr(std::move(allof_result).UnwrapErr());
+-    result = SchemaSpec::Make(std::move(allof_result).Unwrap(), cache_key, rule_name_hint);
++    const auto normalized = schema_conjunction::Collapse(schema);
++    if (normalized.is<picojson::object>()) {
++      const auto& o = normalized.get<picojson::object>();
++      if (!o.count("type") && !o.count("anyOf") && !o.count("oneOf") && !o.count("enum") &&
++          !o.count("const") && !default_type.has_value()) {
++        for (const auto& key :
++             {"minimum",
++              "maximum",
++              "exclusiveMinimum",
++              "exclusiveMaximum",
++              "minLength",
++              "maxLength",
++              "minItems",
++              "maxItems",
++              "minProperties",
++              "maxProperties"})
++          if (o.count(key)) throw std::runtime_error("bounded allOf requires an explicit type");
++      }
++    }
++    return Parse(normalized, rule_name_hint, default_type);
++  } else if (schema_obj.count("const") || schema_obj.count("enum")) {
++    const auto filtered = schema_conjunction::FilterFinite(schema_obj);
++    if (schema_conjunction::IsFalse(filtered))
++      return ResultErr<SchemaError>(
++          SchemaErrorType::kUnsatisfiableSchema,
++          "No enum/const value satisfies the shared constraints"
++      );
++    if (filtered.get<picojson::object>().count("const")) {
++      auto parsed = ParseConst(filtered.get<picojson::object>());
++      if (parsed.IsErr()) return ResultErr(std::move(parsed).UnwrapErr());
++      result = SchemaSpec::Make(std::move(parsed).Unwrap(), cache_key, rule_name_hint);
++    } else {
++      auto parsed = ParseEnum(filtered.get<picojson::object>());
++      if (parsed.IsErr()) return ResultErr(std::move(parsed).UnwrapErr());
++      result = SchemaSpec::Make(std::move(parsed).Unwrap(), cache_key, rule_name_hint);
++    }
+   } else if (schema_obj.count("type") || default_type.has_value()) {
+     if (schema_obj.count("type") && schema_obj.at("type").is<picojson::array>()) {
+       auto type_array_result = ParseTypeArray(schema_obj, rule_name_hint);
+@@ -547,9 +702,49 @@ Result<NullSpec, SchemaError> SchemaParser::ParseNull(const picojson::object&) {
+ }
+ 
+ Result<ArraySpec, SchemaError> SchemaParser::ParseArray(const picojson::object& schema) {
+-  WarnUnsupportedKeywords(schema, {"uniqueItems", "contains", "minContains", "maxContains"});
++  WarnUnsupportedKeywords(schema, {"uniqueItems"});
+   ArraySpec spec;
+ 
++  picojson::array predicates;
++  if (schema.count("contains")) predicates.emplace_back(schema);
++  if (schema_conjunction::ContainsConjunction(schema)) {
++    const auto& extra = schema.at("allOf").get<picojson::array>();
++    predicates.insert(predicates.end(), extra.begin(), extra.end());
++  }
++  for (const auto& predicate : predicates) {
++    const auto& clause = predicate.get<picojson::object>();
++    const auto& condition = clause.at("contains");
++    if (!condition.is<picojson::object>())
++      throw std::runtime_error("contains currently requires enum or const");
++    const auto filtered = schema_conjunction::FilterFinite(condition.get<picojson::object>());
++    const auto o = schema_conjunction::IsFalse(filtered)
++                       ? picojson::object{{"enum", picojson::value(picojson::array{})}}
++                       : filtered.get<picojson::object>();
++    ArraySpec::Contains c;
++    if (o.count("enum")) {
++      for (const auto& value : o.at("enum").get<picojson::array>())
++        c.json_values.push_back(value.serialize());
++    } else if (o.count("const")) {
++      c.json_values.push_back(o.at("const").serialize());
++    } else {
++      throw std::runtime_error("contains currently requires enum or const");
++    }
++    for (const std::string key : {"minContains", "maxContains"}) {
++      if (!clause.count(key)) continue;
++      if (!clause.at(key).is<int64_t>() || clause.at(key).get<int64_t>() < 0)
++        throw std::runtime_error(key + " must be a nonnegative integer");
++      if (key == "minContains")
++        c.minimum = clause.at(key).get<int64_t>();
++      else
++        c.maximum = clause.at(key).get<int64_t>();
++    }
++    if (c.maximum != -1 && c.maximum < c.minimum)
++      return ResultErr<SchemaError>(
++          SchemaErrorType::kUnsatisfiableSchema, "minContains exceeds maxContains"
++      );
++    spec.contains.push_back(std::move(c));
++  }
++
+   if (schema.count("prefixItems")) {
+     if (!schema.at("prefixItems").is<picojson::array>()) {
+       return ResultErr<SchemaError>(
+@@ -584,8 +779,14 @@ Result<ArraySpec, SchemaError> SchemaParser::ParseArray(const picojson::object&
+     } else {
+       spec.allow_additional_items = true;
+       auto items_result = Parse(items_value, "item");
+-      if (items_result.IsErr()) return ResultErr(std::move(items_result).UnwrapErr());
+-      spec.additional_items = std::move(items_result).Unwrap();
++      if (items_result.IsErr()) {
++        auto error = std::move(items_result).UnwrapErr();
++        if (error.Type() != SchemaErrorType::kUnsatisfiableSchema)
++          return ResultErr(std::move(error));
++        spec.allow_additional_items = false;
++      } else {
++        spec.additional_items = std::move(items_result).Unwrap();
++      }
+     }
+   } else if (schema.count("unevaluatedItems")) {
+     auto unevaluated_items_value = schema.at("unevaluatedItems");
+@@ -599,8 +800,14 @@ Result<ArraySpec, SchemaError> SchemaParser::ParseArray(const picojson::object&
+     } else {
+       spec.allow_additional_items = true;
+       auto items_result = Parse(unevaluated_items_value, "unevaluated_item");
+-      if (items_result.IsErr()) return ResultErr(std::move(items_result).UnwrapErr());
+-      spec.additional_items = std::move(items_result).Unwrap();
++      if (items_result.IsErr()) {
++        auto error = std::move(items_result).UnwrapErr();
++        if (error.Type() != SchemaErrorType::kUnsatisfiableSchema)
++          return ResultErr(std::move(error));
++        spec.allow_additional_items = false;
++      } else {
++        spec.additional_items = std::move(items_result).Unwrap();
++      }
+     }
+   } else if (!config_.strict_mode) {
+     spec.allow_additional_items = true;
+@@ -615,7 +822,7 @@ Result<ArraySpec, SchemaError> SchemaParser::ParseArray(const picojson::object&
+     }
+     spec.min_items = std::max(static_cast<int64_t>(0), schema.at("minItems").get<int64_t>());
+   }
+-  if (schema.count("minContains")) {
++  if (schema.count("contains") && schema.count("minContains")) {
+     if (!schema.at("minContains").is<int64_t>()) {
+       return ResultErr<SchemaError>(
+           SchemaErrorType::kInvalidSchema, "minContains must be an integer"
+@@ -665,6 +872,10 @@ Result<ArraySpec, SchemaError> SchemaParser::ParseArray(const picojson::object&
+       );
+     }
+   }
++  if (!spec.contains.empty() && !BuildContainsGraph(spec))
++    return ResultErr<SchemaError>(
++        SchemaErrorType::kUnsatisfiableSchema, "No array satisfies the contains constraints"
++    );
+   return ResultOk(std::move(spec));
+ }
+ 
+@@ -680,7 +891,25 @@ Result<ObjectSpec, SchemaError> SchemaParser::ParseObject(const picojson::object
+     auto properties_obj = schema.at("properties").get<picojson::object>();
+     for (const auto& key : properties_obj.ordered_keys()) {
+       auto prop_result = Parse(properties_obj.at(key), key);
+-      if (prop_result.IsErr()) return ResultErr(std::move(prop_result).UnwrapErr());
++      if (prop_result.IsErr()) {
++        auto error = std::move(prop_result).UnwrapErr();
++        if (error.Type() != SchemaErrorType::kUnsatisfiableSchema)
++          return ResultErr(std::move(error));
++        const auto required = schema.count("required")
++                                  ? schema.at("required").get<picojson::array>()
++                                  : picojson::array{};
++        if (std::find(required.begin(), required.end(), picojson::value(key)) != required.end())
++          return ResultErr(std::move(error));
++        if (schema.count("patternProperties") || !schema.count("additionalProperties") ||
++            !schema_conjunction::IsFalse(schema.at("additionalProperties")))
++          return ResultErr<SchemaError>(
++              SchemaErrorType::kInvalidSchema,
++              "Prohibited optional properties in open or pattern-property schemas are unsupported"
++          );
++        // Omitting an impossible optional field is valid. Closing the object
++        // continues to prohibit that field after removing it from properties.
++        continue;
++      }
+       spec.properties.push_back({key, std::move(prop_result).Unwrap()});
+     }
+   }
+@@ -735,8 +964,14 @@ Result<ObjectSpec, SchemaError> SchemaParser::ParseObject(const picojson::object
+     } else {
+       spec.allow_additional_properties = true;
+       auto add_props_result = Parse(add_props, "additional");
+-      if (add_props_result.IsErr()) return ResultErr(std::move(add_props_result).UnwrapErr());
+-      spec.additional_properties_schema = std::move(add_props_result).Unwrap();
++      if (add_props_result.IsErr()) {
++        auto error = std::move(add_props_result).UnwrapErr();
++        if (error.Type() != SchemaErrorType::kUnsatisfiableSchema)
++          return ResultErr(std::move(error));
++        spec.allow_additional_properties = false;
++      } else {
++        spec.additional_properties_schema = std::move(add_props_result).Unwrap();
++      }
+     }
+   }
+ 
+@@ -895,27 +1130,31 @@ Result<AnyOfSpec, SchemaError> SchemaParser::ParseAnyOf(const picojson::object&
+     );
+   }
+   int idx = 0;
++  auto shared = schema;
++  shared.erase(anyof_key);
++  std::vector<picojson::value> alternatives;
+   for (const auto& option : schema.at(anyof_key).get<picojson::array>()) {
+-    auto option_result = Parse(option, "case_" + std::to_string(idx));
+-    if (option_result.IsErr()) return ResultErr(std::move(option_result).UnwrapErr());
++    auto complete = schema_conjunction::Conjoin(picojson::value(shared), option);
++    if (schema_conjunction::IsFalse(complete)) continue;
++    auto option_result = Parse(complete, "case_" + std::to_string(idx));
++    if (option_result.IsErr()) {
++      auto error = std::move(option_result).UnwrapErr();
++      if (error.Type() == SchemaErrorType::kUnsatisfiableSchema) continue;
++      return ResultErr(std::move(error));
++    }
++    if (std::string(anyof_key) == "oneOf") {
++      for (const auto& prior : alternatives)
++        if (!schema_conjunction::Disjoint(prior, complete))
++          throw std::runtime_error("oneOf alternatives must be provably disjoint");
++      alternatives.push_back(complete);
++    }
+     spec.options.push_back(std::move(option_result).Unwrap());
+     ++idx;
+   }
+-  return ResultOk(std::move(spec));
+-}
+-
+-Result<AllOfSpec, SchemaError> SchemaParser::ParseAllOf(const picojson::object& schema) {
+-  AllOfSpec spec;
+-  if (!schema.at("allOf").is<picojson::array>()) {
+-    return ResultErr<SchemaError>(SchemaErrorType::kInvalidSchema, "allOf must be an array");
+-  }
+-  int idx = 0;
+-  for (const auto& sub_schema : schema.at("allOf").get<picojson::array>()) {
+-    auto sub_result = Parse(sub_schema, "all_" + std::to_string(idx));
+-    if (sub_result.IsErr()) return ResultErr(std::move(sub_result).UnwrapErr());
+-    spec.schemas.push_back(std::move(sub_result).Unwrap());
+-    ++idx;
+-  }
++  if (spec.options.empty())
++    return ResultErr<SchemaError>(
++        SchemaErrorType::kUnsatisfiableSchema, "No alternative satisfies the shared constraints"
++    );
+   return ResultOk(std::move(spec));
+ }
+ 
+@@ -941,9 +1180,17 @@ Result<TypeArraySpec, SchemaError> SchemaParser::ParseTypeArray(
+     schema_copy["type"] = type;
+     auto type_result =
+         Parse(picojson::value(schema_copy), rule_name_hint + "_" + type.get<std::string>());
+-    if (type_result.IsErr()) return ResultErr(std::move(type_result).UnwrapErr());
++    if (type_result.IsErr()) {
++      auto error = std::move(type_result).UnwrapErr();
++      if (error.Type() == SchemaErrorType::kUnsatisfiableSchema) continue;
++      return ResultErr(std::move(error));
++    }
+     spec.type_schemas.push_back(std::move(type_result).Unwrap());
+   }
++  if (spec.type_schemas.empty())
++    return ResultErr<SchemaError>(
++        SchemaErrorType::kUnsatisfiableSchema, "No type satisfies the schema"
++    );
+   return ResultOk(std::move(spec));
+ }
+ 
+@@ -1422,9 +1669,45 @@ std::string JSONSchemaConverter::GenerateNull(const NullSpec& spec, const std::s
+   return "\"null\"";
+ }
+ 
++std::string JSONSchemaConverter::GenerateArrayContains(
++    const ArraySpec& spec, const std::string& rule_name
++) {
++  const auto graph = BuildContainsGraph(spec);
++  if (!graph) throw std::runtime_error("unsatisfiable contains constraints");
++  const auto& values = graph->values;
++  const auto& edges = graph->edges;
++  const auto& accepting = graph->accepting;
++  const auto& productive = graph->productive;
++  indent_manager_.StartIndent();
++  const auto start = indent_manager_.StartSeparator();
++  const auto middle = indent_manager_.MiddleSeparator();
++  const auto end = indent_manager_.EndSeparator();
++  const auto empty = indent_manager_.EmptySeparator();
++  indent_manager_.EndIndent();
++  std::vector<std::string> literals;
++  for (size_t v = 0; v < values.size(); ++v)
++    literals.push_back(CreateRule(
++        SchemaSpec::Make(ConstSpec{values[v]}), rule_name + "_contains_value_" + std::to_string(v)
++    ));
++  auto name = [&](size_t i) { return rule_name + "_contains_state_" + std::to_string(i); };
++  for (size_t i = 0; i < graph->first.size(); ++i) {
++    if (!productive[i]) continue;
++    std::string body = accepting[i] ? (graph->first[i] ? empty : end) + " \"]\"" : "";
++    for (const auto& edge : edges[i]) {
++      if (!productive[edge.next]) continue;
++      if (!body.empty()) body += " | ";
++      body +=
++          (graph->first[i] ? start : middle) + " " + literals[edge.value] + " " + name(edge.next);
++    }
++    ebnf_script_creator_.AddRule(name(i), body);
++  }
++  return "\"[\" " + name(0);
++}
++
+ std::string JSONSchemaConverter::GenerateArray(
+     const ArraySpec& spec, const std::string& rule_name
+ ) {
++  if (!spec.contains.empty()) return GenerateArrayContains(spec, rule_name);
+   indent_manager_.StartIndent();
+ 
+   auto start_separator = indent_manager_.StartSeparator();
+@@ -2163,8 +2446,7 @@ std::string JSONSchemaConverter::GenerateAllOf(
+   if (spec.schemas.size() == 1) {
+     return GenerateFromSpec(spec.schemas[0], rule_name + "_case_0");
+   }
+-  XGRAMMAR_LOG(WARNING) << "Support for allOf with multiple options is still ongoing";
+-  return GenerateFromSpec(SchemaSpec::Make(AnySpec{}, "", "any"), rule_name);
++  throw std::runtime_error("allOf must be normalized before grammar generation");
+ }
+ 
+ std::string JSONSchemaConverter::GenerateTypeArray(
+diff --git a/cpp/json_schema_converter.h b/cpp/json_schema_converter.h
+index aa171bf..6b81f85 100644
+--- a/cpp/json_schema_converter.h
++++ b/cpp/json_schema_converter.h
+@@ -71,6 +71,12 @@ struct AnySpec {
+ 
+ // Complex Type Specs
+ struct ArraySpec {
++  struct Contains {
++    std::vector<std::string> json_values;
++    int64_t minimum = 1;
++    int64_t maximum = -1;
++  };
++  std::vector<Contains> contains;
+   std::vector<SchemaSpecPtr> prefix_items;
+   bool allow_additional_items = true;
+   SchemaSpecPtr additional_items;  // nullptr means not allowed
+@@ -283,6 +289,7 @@ class JSONSchemaConverter {
+   virtual std::string GenerateBoolean(const BooleanSpec& spec, const std::string& rule_name);
+   virtual std::string GenerateNull(const NullSpec& spec, const std::string& rule_name);
+   virtual std::string GenerateArray(const ArraySpec& spec, const std::string& rule_name);
++  std::string GenerateArrayContains(const ArraySpec& spec, const std::string& rule_name);
+   virtual std::string GenerateObject(
+       const ObjectSpec& spec, const std::string& rule_name, bool need_brace = true
+   );

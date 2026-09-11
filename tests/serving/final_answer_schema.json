@@ -1,0 +1,357 @@
+{
+ "tool_name": "submit_final_answer",
+ "tool_description": "Submit the final answer envelope after source acquisition: exactly one parameter, answer, whose value is one JSON object holding evidence_review (the user-visible parts) and, inside that same object, optional followups and excluded_sources. Nothing may appear beside answer or after its closing brace. Include every exact current-turn source ID used. This ends the current Manager run.",
+ "parameters": {
+  "type": "object",
+  "properties": {
+   "answer": {
+    "type": "object",
+    "description": "The envelope object. Everything goes inside it: evidence_review (required), followups and excluded_sources (optional). The parameter value is exactly this one JSON object and ends at its closing brace.",
+    "properties": {
+     "evidence_review": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Review each substantive conclusion against the current evidence. Each claim is a complete user-visible Markdown paragraph or block. These exact claims ARE the answer in order; do not generate a separate summary.",
+      "items": {
+       "type": "object",
+       "properties": {
+        "support": {
+         "type": "string",
+         "minLength": 1,
+         "description": "Identify the returned fields or source passages supporting this exact text; for general text identify the current user request. Not displayed."
+        },
+        "basis": {
+         "type": "string",
+         "enum": [
+          "user_statement",
+          "observed_record",
+          "computed_statistic",
+          "published_evidence",
+          "clinical_interpretation",
+          "coverage_limitation",
+          "conversation_content",
+          "general"
+         ],
+         "description": "Choose the basis of this exact claim. general: source-free conversation. user_statement: current_user_message input reference, no source_ids. conversation_content: an original user or assistant conversation read. observed_record: personal records or an original user message, without clinical grading. computed_statistic: a returned health computation. published_evidence: a literature result with returned citations. clinical_interpretation: BOTH personal evidence (or attributed current-user input) AND applicable cited literature in this block. Health records alone do not support it. coverage_limitation: the evidence or current input whose gap is being explained. These are provenance requirements, not proof that a claim is supported: the selected evidence must actually establish the stated relationship. Do not relabel an unsupported clinical conclusion as an observation. A correlation source with analysis_gaps and no completed analyses supports coverage_limitation only; missing alignment is not a negative result."
+        },
+        "source_ids": {
+         "type": "array",
+         "items": {
+          "type": "integer",
+          "minimum": 1,
+          "enum": [
+           1,
+           2
+          ]
+         },
+         "description": "Exact settled source IDs supporting THIS block, including the parent literature source for selected passages or citations. Sources selected in another block do not support this one automatically. A clinical_interpretation must include its personal and literature sources together (or input_refs plus literature). If essential evidence is missing, state that limitation instead of adding an unrelated source."
+        },
+        "input_refs": {
+         "type": "array",
+         "maxItems": 0,
+         "items": {
+          "type": "string",
+          "enum": [
+           "current_user_message"
+          ]
+         },
+         "description": "Use [current_user_message] when relying on facts or assumptions explicitly supplied in this message. Attribute them as user-supplied, not independently verified records. Use basis=user_statement and source_ids=[] for those statements; combine this reference with literature source_ids for an applicable interpretation. This reference grants no tool access and saves no memory."
+        },
+        "passage_ids": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         },
+         "description": "Select directly supporting returned passage_choices passage_id values. Each selection includes its paper citation and exact retained quote, including for an evidence limitation. Do not repeat the parent paper in citation_ids. Use [] when no passage applies. Runtime copies source text; do not reproduce quotations or metadata.",
+         "maxItems": 0
+        },
+        "conversation_refs": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         },
+         "description": "Select result_ref values from original conversation READ results to cite decisions. Search matches must be read first. Runtime renders their exact app links. Do not write conversation URLs or reconstruct message IDs in claim prose. Use [] for other sources.",
+         "maxItems": 0
+        },
+        "citation_ids": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         },
+         "description": "Paper references without quotes: exact returned citation_ids from the selected source_ids. A published_evidence or clinical_interpretation block that cites a literature source with returned citations must select at least one paper here or through passage_ids (papers selected through passage_ids are included automatically). Never invent URLs.",
+         "maxItems": 0
+        },
+        "claim": {
+         "type": "object",
+         "description": "Select exactly one typed object. type=finding selects a returned health finding by finding_id, with its one source ID and declared basis; the runtime displays its exact result. type=text contains your exact Markdown in text. type=table contains columns and rows, never pipe-delimited text. Do not serialize a claim object into a string or mix fields. Tables have at most five columns; split wider comparisons by provider or topic. Cells are single-line strings; preserve dates, units and missing values.",
+         "oneOf": [
+          {
+           "type": "object",
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "text"
+             ]
+            },
+            "text": {
+             "type": "string",
+             "minLength": 1
+            }
+           },
+           "required": [
+            "type",
+            "text"
+           ],
+           "additionalProperties": false
+          },
+          {
+           "type": "object",
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "finding"
+             ]
+            },
+            "finding_id": {
+             "type": "string",
+             "minLength": 1,
+             "enum": [
+              "series:0",
+              "series:1",
+              "series:2",
+              "series:3",
+              "series:4",
+              "series:5"
+             ]
+            }
+           },
+           "required": [
+            "type",
+            "finding_id"
+           ],
+           "additionalProperties": false
+          },
+          {
+           "type": "object",
+           "properties": {
+            "type": {
+             "type": "string",
+             "enum": [
+              "table"
+             ]
+            },
+            "columns": {
+             "type": "array",
+             "minItems": 1,
+             "maxItems": 8,
+             "items": {
+              "type": "string"
+             }
+            },
+            "rows": {
+             "type": "array",
+             "minItems": 1,
+             "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+               "type": "string"
+              }
+             }
+            }
+           },
+           "required": [
+            "type",
+            "columns",
+            "rows"
+           ],
+           "additionalProperties": false
+          }
+         ]
+        }
+       },
+       "required": [
+        "support",
+        "basis",
+        "source_ids",
+        "passage_ids",
+        "claim"
+       ],
+       "additionalProperties": false,
+       "anyOf": [
+        {
+         "properties": {
+          "basis": {
+           "enum": [
+            "observed_record"
+           ]
+          },
+          "source_ids": {
+           "type": "array",
+           "minItems": 1,
+           "items": {
+            "enum": [
+             1
+            ]
+           }
+          }
+         }
+        },
+        {
+         "properties": {
+          "basis": {
+           "enum": [
+            "computed_statistic"
+           ]
+          },
+          "source_ids": {
+           "type": "array",
+           "minItems": 1,
+           "items": {
+            "enum": [
+             1
+            ]
+           }
+          }
+         }
+        },
+        {
+         "properties": {
+          "basis": {
+           "enum": [
+            "published_evidence"
+           ]
+          },
+          "source_ids": {
+           "type": "array",
+           "minItems": 1,
+           "items": {
+            "enum": [
+             2
+            ]
+           }
+          }
+         }
+        },
+        {
+         "anyOf": [
+          {
+           "properties": {
+            "source_ids": {
+             "contains": {
+              "enum": [
+               1
+              ]
+             }
+            }
+           }
+          }
+         ],
+         "properties": {
+          "basis": {
+           "enum": [
+            "clinical_interpretation"
+           ]
+          },
+          "source_ids": {
+           "minItems": 1,
+           "items": {
+            "enum": [
+             1,
+             2
+            ]
+           },
+           "contains": {
+            "enum": [
+             2
+            ]
+           }
+          }
+         }
+        },
+        {
+         "properties": {
+          "basis": {
+           "enum": [
+            "coverage_limitation"
+           ]
+          },
+          "source_ids": {
+           "type": "array",
+           "minItems": 1,
+           "items": {
+            "enum": [
+             1,
+             2
+            ]
+           }
+          }
+         }
+        },
+        {
+         "properties": {
+          "basis": {
+           "enum": [
+            "general"
+           ]
+          },
+          "source_ids": {
+           "maxItems": 0
+          }
+         }
+        }
+       ]
+      }
+     },
+     "excluded_sources": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 12,
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "source_id",
+        "reason"
+       ],
+       "properties": {
+        "source_id": {
+         "type": "integer",
+         "minimum": 1
+        },
+        "reason": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 240
+        }
+       }
+      },
+      "description": "Acquired current-turn sources this answer does not use, each with a brief reason. Every returned literature source must be cited by a block or listed here."
+     },
+     "followups": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 3,
+      "items": {
+       "type": "string",
+       "minLength": 8,
+       "maxLength": 160
+      },
+      "description": "Zero to three distinct questions that naturally continue this exact answer and obey the same source authority."
+     }
+    },
+    "required": [
+     "evidence_review"
+    ],
+    "additionalProperties": false
+   }
+  },
+  "required": [
+   "answer"
+  ],
+  "additionalProperties": false
+ }
+}

@@ -1,0 +1,75 @@
+name: Verify and build Fable schema compiler
+
+on:
+  pull_request:
+    paths:
+      - docker/Dockerfile.schema-compiler
+      - docker/schema-compiler/**
+      - scripts/build_schema_compiler.py
+      - tests/**
+      - .github/workflows/schema-compiler.yml
+  workflow_dispatch:
+  push:
+    tags: ["compiler-build-*"]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      - name: Prepare isolated build tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/compiler-tools"
+          "$RUNNER_TEMP/compiler-tools/bin/pip" install cmake==3.31.10 jsonschema==4.25.1
+          echo "$RUNNER_TEMP/compiler-tools/bin" >> "$GITHUB_PATH"
+      - name: Validate independent oracle and rebuild pinned source
+        run: |
+          python tests/serving/check_fixtures.py
+          python scripts/build_schema_compiler.py --work-dir "$RUNNER_TEMP/compiler-build"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: compiler-build-manifest
+          path: ${{ runner.temp }}/compiler-build/compiler-build.json
+
+  image:
+    # Publishing requires explicit dispatch or a compiler-build tag. PRs cannot publish or deploy.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/compiler-build-')
+    needs: native
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      - name: Free space for the pinned CUDA base
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build, verify installed compiler, and publish candidate
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: docker/Dockerfile.schema-compiler
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/vitadao/vita-agent-model-sglang:schema-${{ github.sha }}
+          provenance: false
+      - name: Record immutable identity
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "Source: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: ghcr.io/vitadao/vita-agent-model-sglang@$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "Not deployed. Test-enclave acceptance and release authorization remain required." >> "$GITHUB_STEP_SUMMARY"
