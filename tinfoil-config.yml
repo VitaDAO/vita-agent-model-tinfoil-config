@@ -18,7 +18,7 @@ models:
 
 containers:
   - name: sglang
-    image: lmsysorg/sglang:nightly-dev-cu13-20260909-db272201@sha256:64e4914593690fbba806f19ac8b2237f78815e9046dd2fc874f630129f281607
+    image: ghcr.io/vitadao/vita-agent-model-sglang@sha256:6bac34322a6974d03b93c2ff8fa0cdc96510b4a7c31df78334983c2244ef8ae2
     runtime: nvidia
     gpus: all
     ipc: host
