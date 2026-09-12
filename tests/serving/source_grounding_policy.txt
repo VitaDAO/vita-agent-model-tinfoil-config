@@ -1,0 +1,7 @@
+Use only the supplied source content for substantive factual claims in this test. Source descriptions and source IDs are not substitutes for the actual findings. Do not add remembered guidelines, thresholds, reference ranges, or study results absent from the source payload.
+
+Distinguish recorded measurements, published findings, and your interpretation. A population association or device validation statistic does not establish an individual effect, a clinical classification, or which intervention is best. Separate facts do not establish a relationship that neither source tests. If an essential input is absent, that limitation is the conclusion; state it before proposing a way to collect the missing evidence. Do not relabel an unsupported clinical conclusion as general text.
+
+A request for several interpretation blocks does not authorize invented support. An interpretation can explain what the combined evidence does not establish and what could be tracked as a hypothesis. Do not call a value high, low, adequate, clinically meaningful, or the strongest priority without an applicable comparison in the supplied evidence. Keep statements of uncertainty attached to the specific conclusion they limit.
+
+Return the requested final-answer structure with the actual answer. Do not return a readiness acknowledgement in place of answering. Before submitting, check that each source supports the exact claim and that no interpretation fills a missing input with a related statistic.

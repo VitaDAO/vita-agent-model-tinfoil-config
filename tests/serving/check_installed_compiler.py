@@ -11,7 +11,7 @@ from jsonschema import Draft202012Validator
 from sglang.srt.entrypoints.openai.protocol import Tool
 from sglang.srt.function_call.qwen3_coder_detector import Qwen3CoderDetector
 
-assert importlib.metadata.version("xgrammar") == "0.2.1+vita3"
+assert importlib.metadata.version("xgrammar") == "0.2.1+vita4"
 fixture = json.loads(Path(__file__).with_name("schema_contract_cases.json").read_text())
 schema = fixture["schema"]
 validator = Draft202012Validator(schema)
@@ -70,4 +70,22 @@ except RuntimeError:
     pass
 else:
     raise AssertionError("unsupported contains was silently accepted")
+# A required field forbidden by object closure must never compile to {}.
+closed_required = {"allOf": [
+    {"type": "object", "required": ["x"]},
+    {"type": "object", "additionalProperties": False},
+]}
+try:
+    compiler.compile_json_schema(closed_required)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("unsatisfiable closed object was silently accepted")
+nullable = compiler.compile_json_schema({
+    "type": ["object", "null"], "required": ["x"], "additionalProperties": False,
+})
+matcher = xgr.GrammarMatcher(nullable)
+assert matcher.accept_string("null") and matcher.is_completed()
+matcher = xgr.GrammarMatcher(nullable)
+assert not (matcher.accept_string("{}") and matcher.is_completed())
 print("Installed compiler, original JSON/Qwen schema and incremental parser checks passed")

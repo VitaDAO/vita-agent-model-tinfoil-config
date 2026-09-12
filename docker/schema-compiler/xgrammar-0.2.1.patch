@@ -369,7 +369,30 @@ index 5f5ed77..909de1f 100644
 +      }
      }
    }
+
+@@ -756,7 +991,22 @@ Result<ObjectSpec, SchemaError> SchemaParser::ParseObject(const picojson::object
+   } else if (config_.strict_mode) {
+     spec.allow_unevaluated_properties = false;
+   }
  
++  if (!spec.allow_additional_properties && !spec.allow_unevaluated_properties &&
++      spec.pattern_properties.empty()) {
++    for (const auto& required : spec.required) {
++      if (std::none_of(
++              spec.properties.begin(),
++              spec.properties.end(),
++              [&](const ObjectSpec::Property& property) { return property.name == required; }
++          ))
++        return ResultErr<SchemaError>(
++            SchemaErrorType::kUnsatisfiableSchema,
++            "Required property is prohibited when additional properties are disabled"
++        );
++    }
++  }
++
+   if (schema.count("minProperties")) {
+     if (!schema.at("minProperties").is<int64_t>()) {
+       return ResultErr<SchemaError>(
 @@ -895,27 +1130,34 @@ Result<AnyOfSpec, SchemaError> SchemaParser::ParseAnyOf(const picojson::object&
      );
    }

@@ -14,7 +14,8 @@ bool Accepts(
     const std::string& value,
     bool structural = false,
     bool whitespace = true,
-    std::optional<int> indent = std::nullopt
+    std::optional<int> indent = std::nullopt,
+    bool strict_mode = true
 ) {
   std::vector<std::string> vocab;
   for (int c = 0; c < 128; ++c) vocab.emplace_back(1, static_cast<char>(c));
@@ -23,7 +24,9 @@ bool Accepts(
       xgrammar::TokenizerInfo(vocab, xgrammar::VocabType::RAW, 129, std::vector<int32_t>{128}), 1
   );
   auto compiled = structural ? compiler.CompileStructuralTag(schema)
-                             : compiler.CompileJSONSchema(schema, whitespace, indent);
+                             : compiler.CompileJSONSchema(
+                                   schema, whitespace, indent, std::nullopt, strict_mode
+                               );
   xgrammar::GrammarMatcher matcher(compiled);
   return matcher.AcceptString(value) && matcher.IsCompleted();
 }
@@ -267,6 +270,49 @@ TEST(ServingSchemaContract, ImpossibleOptionalFieldCanBeOmitted) {
   EXPECT_TRUE(Accepts(text, "{}"));
   EXPECT_FALSE(Accepts(text, R"({"x":"a"})"));
 }
+
+TEST(ServingSchemaContract, RequiredUndeclaredFieldHonorsObjectClosure) {
+  EXPECT_THROW(
+      Accepts(R"({"type":"object","required":["x"],"additionalProperties":false})", "{}"),
+      std::exception
+  );
+  EXPECT_TRUE(Accepts(
+      R"({"type":"object","required":["x"],"additionalProperties":true})", R"({"x":1})"
+  ));
+  EXPECT_TRUE(Accepts(
+      R"({"type":"object","required":["x"]})",
+      R"({"x":1})",
+      false,
+      true,
+      std::nullopt,
+      false
+  ));
+
+  EXPECT_THROW(
+      Accepts(
+          R"({"allOf":[{"type":"object","required":["x"]},{"type":"object","additionalProperties":false}]})",
+          "{}"
+      ),
+      std::exception
+  );
+  EXPECT_TRUE(Accepts(
+      R"({"allOf":[{"type":"object","required":["x"]},{"type":"object","additionalProperties":true}]})",
+      R"({"x":1})"
+  ));
+
+  const std::string nullable_closed =
+      R"({"type":["object","null"],"required":["x"],"additionalProperties":false})";
+  EXPECT_TRUE(Accepts(nullable_closed, "null"));
+  EXPECT_FALSE(Accepts(nullable_closed, R"({"x":1})"));
+  EXPECT_FALSE(Accepts(nullable_closed, "{}"));
+
+  const std::string nullable_declared =
+      R"({"type":["object","null"],"required":["x"],"properties":{"x":{"type":"integer"}},"additionalProperties":false})";
+  EXPECT_TRUE(Accepts(nullable_declared, "null"));
+  EXPECT_TRUE(Accepts(nullable_declared, R"({"x":1})"));
+  EXPECT_FALSE(Accepts(nullable_declared, "{}"));
+}
+
 TEST(ServingSchemaContract, UntypedConjunctionCannotLoseBounds) {
   EXPECT_THROW(Accepts(R"({"allOf":[{"minimum":2},{"maximum":4}]})", "1"), std::exception);
 }
