@@ -56,7 +56,10 @@ omits the correction and intentionally fails the regression tests.
 `docker/schema-compiler/xgrammar-0.2.1.patch` changes the pinned upstream source;
 `schema_conjunction.h` contains its conjunction support. This is a build-time
 source change, not a runtime output-repair path. The build manifest records both
-file hashes. The resulting package version is `0.2.1+vita3`.
+file hashes. The resulting package version is `0.2.1+vita4`. The September 12 correction also
+rejects closed objects whose required property has no allowed declaration, while
+preserving an independently valid null alternative. See
+[the RunPod evaluation](runpod-serving-benchmark-2026-09-12.md) for current evidence.
 
 ## Candidate image and remaining release gates
 

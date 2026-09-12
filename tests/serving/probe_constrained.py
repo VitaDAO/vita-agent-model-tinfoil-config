@@ -87,6 +87,25 @@ named = {"type": "function", "function": {"name": NAME}}
 fmt = lambda schema, name: {"type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": True}}
 
 
+def parse_tool_arguments(m, tools, tool_choice):
+    choice = tool_choice
+    if isinstance(choice, dict):
+        expected_name = choice["function"]["name"]
+        if len(m.tool_calls or []) != 1 or m.tool_calls[0].function.name != expected_name:
+            raise ValueError("Named-tool request did not return exactly the requested tool")
+    if m.tool_calls:
+        args = json.loads(m.tool_calls[0].function.arguments)
+        definition = next((t["function"] for t in tools
+                           if t["function"]["name"] == m.tool_calls[0].function.name), None)
+        if definition is None:
+            raise ValueError("Response called an undeclared tool")
+        # Validate the complete envelope before unwrapping the answer. Otherwise
+        # required or forbidden top-level arguments could escape the check.
+        Draft202012Validator(definition["parameters"]).validate(args)
+        return args
+    return None
+
+
 def call(messages, capture_name, **kw):
     t0 = time.monotonic()
     r = client.chat.completions.create(model=MODEL, messages=messages, temperature=0.6, top_p=0.95,
@@ -98,8 +117,8 @@ def call(messages, capture_name, **kw):
     if r.choices[0].finish_reason == "length":
         raise ValueError(f"generation truncated at max_tokens={MAXT}; raw response saved when CAPTURE_DIR is set")
     m, n = r.choices[0].message, (r.usage.completion_tokens if r.usage else 0)
-    if m.tool_calls:
-        args = json.loads(m.tool_calls[0].function.arguments)
+    args = parse_tool_arguments(m, kw.get("tools", []), kw.get("tool_choice"))
+    if args is not None:
         value = args.get("answer", args) if "answer" in PARAMS.get("properties", {}) and "answer" in args else args
     else:
         text = (m.content or "").split("</think>")[-1].strip()

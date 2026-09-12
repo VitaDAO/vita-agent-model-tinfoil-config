@@ -5,10 +5,8 @@ on:
     paths:
       - docker/Dockerfile.schema-compiler
       - docker/schema-compiler/**
-      - docker/strict-thinking/**
       - scripts/build_schema_compiler.py
       - scripts/install_response_contract.py
-      - scripts/install_thinking_mask_optimization.py
       - bench_enclave.py
       - tests/**
       - .github/workflows/schema-compiler.yml
@@ -41,28 +39,10 @@ jobs:
             --output "$RUNNER_TEMP/serving_chat.py"
           python scripts/install_response_contract.py --source "$RUNNER_TEMP/serving_chat.py"
           python tests/serving/test_response_contract.py "$RUNNER_TEMP/serving_chat.py"
-      - name: Verify strict-thinking masks and benchmark failure handling
-        env:
-          SGLANG_SOURCE_ROOT: ${{ runner.temp }}/sglang
+      - name: Verify benchmark failure handling
         run: |
-          python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-          python - <<'PYCODE'
-          import importlib.util, os, urllib.request
-          from pathlib import Path
-          spec = importlib.util.spec_from_file_location("mask_installer", "scripts/install_thinking_mask_optimization.py")
-          module = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(module)
-          root = Path(os.environ["SGLANG_SOURCE_ROOT"])
-          for relative in module.FILES:
-              target = root / relative
-              target.parent.mkdir(parents=True, exist_ok=True)
-              url = f"https://raw.githubusercontent.com/sgl-project/sglang/{module.REVISION}/python/sglang/{relative}"
-              with urllib.request.urlopen(url, timeout=30) as response:
-                  target.write_bytes(response.read())
-          module.install(root)
-          PYCODE
-          python tests/serving/test_thinking_mask_optimization.py
           python tests/serving/test_benchmark_stream.py
+          python tests/serving/test_probe_tool_envelope.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: compiler-build-manifest

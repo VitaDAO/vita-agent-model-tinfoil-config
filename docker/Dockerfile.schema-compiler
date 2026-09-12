@@ -24,11 +24,5 @@ COPY tests/serving/test_response_contract.py /opt/vita-schema-compiler/tests/tes
 RUN python3 /opt/vita-schema-compiler/install_response_contract.py \
     && python3 /opt/vita-schema-compiler/tests/test_response_contract.py \
        "$(python3 -c 'import importlib.util; from pathlib import Path; print(Path(importlib.util.find_spec("sglang").origin).parent / "srt/entrypoints/openai/serving_chat.py")')"
-# Preserve active reasoning/schema masks; skip work only for inactive wrappers.
-COPY scripts/install_thinking_mask_optimization.py /opt/vita-serving/scripts/install_thinking_mask_optimization.py
-COPY docker/strict-thinking /opt/vita-serving/docker/strict-thinking
-COPY tests/serving/test_thinking_mask_optimization.py /opt/vita-serving/tests/serving/test_thinking_mask_optimization.py
-RUN python3 /opt/vita-serving/scripts/install_thinking_mask_optimization.py \
-    && python3 /opt/vita-serving/tests/serving/test_thinking_mask_optimization.py
 # Configuration, model packages and launch command remain in tinfoil-config.yml.
 # This Dockerfile alone neither selects a release nor restarts an enclave.
