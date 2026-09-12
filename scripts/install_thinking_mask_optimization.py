@@ -16,7 +16,7 @@ import tempfile
 
 
 REVISION = "db272201a2dbd72e5699e443240a851f1313ad45"
-PATCH_SHA256 = "638c54f9ba50314055af93234da603a3983b9af7e67d55052cf333b9aef5a833"
+PATCH_SHA256 = "3551f347239bdc6b3940ffca49bfe8a7684a807abbc3dfd30583f7353c8fa666"
 FILES = {
     "srt/constrained/base_grammar_backend.py": (
         "41f57a8cb2eda3380cf903535cecb04b873b3abd94b6ad0fdfd2a430778c2e4a",
