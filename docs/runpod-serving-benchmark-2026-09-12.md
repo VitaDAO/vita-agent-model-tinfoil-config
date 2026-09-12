@@ -4,7 +4,7 @@ Task: [#3](https://github.com/VitaDAO/vita-agent-model-tinfoil-config/issues/3).
 
 ## Decision and scope
 
-Keep Fable FP8 with the pinned DFlash2 FP8 draft, block size 8, native strict thinking and its existing 4,096-token maximum. Ship the bounded compiler correction through the release process. Do not select a globally tiny thinking budget for evidence synthesis. Complete source content and an explicit inference policy improved the tested answers; a schema alone cannot guarantee grounded interpretation.
+Keep Fable FP8 with the pinned DFlash2 FP8 draft, block size 8, native strict thinking and its existing 4,096-token maximum. Retain the bounded compiler correction as the release candidate; the full answer-quality gate remains open. Do not select a globally tiny thinking budget for evidence synthesis. Complete source content and an explicit inference policy improved the tested answers; a schema alone cannot guarantee grounded interpretation. The later immutable-image experiment below supports testing a separate concise profile with a 512-token budget, with a larger budget retained for complex answers.
 
 An experimental SGLang mask-skipping change was implemented, independently reviewed, tested, and **removed from the release proposal**. Its small difference was within the observed throughput variation. The final proposal does not add that serving path, installer, or its experimental tests. It also does not change model weights, the Tinfoil environment, the agent's schema or prompt, or application routing.
 
@@ -13,7 +13,7 @@ This is a model-serving evaluation using synthetic fixtures. It is not the appli
 ## Reproducible identities and conditions
 
 - Source base: `8db8761084bd5262e8960042f25983d179b4c781`.
-- Final runtime/build source: `879a16a3fced261856c08cbf5be0dc57daf9dfa2`; later report-only revisions do not change runtime inputs.
+- Final runtime/build source: `879a16a3fced261856c08cbf5be0dc57daf9dfa2`; later test/report revisions do not change runtime inputs.
 - Baseline serving image: `ghcr.io/vitadao/vita-agent-model-sglang@sha256:47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`.
 - SGLang: `db272201a2dbd72e5699e443240a851f1313ad45`.
 - Target: `alexdobrin/Qwen3.8-27B-Fable-Distill-FP8@dad2544d418ffb797af211fb49e4dd770af8e33f`.
@@ -24,7 +24,7 @@ This is a model-serving evaluation using synthetic fixtures. It is not the appli
 - Inference bound to pod loopback. Benchmarks below use a client on that pod. SSH-tunnel runs are retained separately because their network latency is not comparable.
 - No real personal/health data; no public inference listener. Credentials were not committed or placed in result files.
 
-The model server on RunPod used the pinned baseline image with the candidate compiler installed into an isolated Python path. Image-build checks test the rebuilt container's installed bindings; that is distinct from booting the newly published immutable image on a GPU. Tinfoil confidential-compute, storage, extraction, CPU and network differences prevent attributing a RunPod-versus-Tinfoil difference to this compiler change.
+The initial RunPod session used the pinned baseline image with the candidate compiler installed into an isolated Python path. The second session, documented under "Immutable-image acceptance", booted the final immutable image directly with no runtime compiler replacement. Tinfoil confidential-compute, storage, extraction, CPU and network differences prevent attributing a RunPod-versus-Tinfoil difference to this compiler change.
 
 ## Correctness fix
 
@@ -38,7 +38,7 @@ The old compiler accepted `{}` for an impossible closed object that required an 
 
 The result also passed with speculation disabled. The correction rejects the impossible object branch while preserving a valid null branch. It does not claim full JSON Schema support; the documented conjunction, reference and `contains` limitations remain. `patternProperties` interactions beyond this bounded correction remain outside this acceptance claim.
 
-Verification includes 68 native compiler tests, 24 independent Draft 2020-12 fixture expectations, installed-wheel JSON/Qwen/incremental parser checks, and live negative probes. The benchmark harness now rejects missing terminal events, missing token accounting, in-band errors, incomplete stop responses, wrong/duplicate named tools and invalid full tool envelopes. Seven stream tests and four tool-envelope tests cover those boundaries.
+Verification includes 68 native compiler tests, 24 independent Draft 2020-12 fixture expectations, installed-wheel JSON/Qwen/incremental parser checks, and live negative probes. The benchmark harness now rejects missing terminal events, missing token accounting, in-band errors, incomplete stop responses, wrong/duplicate named tools and invalid full tool envelopes. Seven stream tests and twelve envelope, prose-obligation and request-capture tests cover those boundaries.
 
 ## Throughput experiments
 
@@ -160,5 +160,137 @@ verified in the pod list. SSH tunnel and cleanup watchdog exited. The instance
 existed for approximately 94 minutes at $4.59/hour: approximately **$7.17** in listed
 compute-rate time, not a reconciled invoice. No persistent volume was provisioned.
 RunPod credentials remain in the user's macOS Keychain. Tinfoil production is
-unchanged. The newly published image has passed installed-container build checks;
-it has not been booted as that immutable image or attested/deployed on Tinfoil.
+unchanged. At the end of that first session, the newly published image had passed
+installed-container build checks but had not been GPU-booted. The second session
+below closes that RunPod boot gap; Tinfoil attestation/deployment remains separate.
+
+## Immutable-image acceptance: 14:18–14:58 UTC
+
+The second owned H200 booted the final `2fd6c1db…` image directly, with the same
+target/draft revisions, DFlash2 FP8, block size 8 and runtime settings above.
+There was no wheel swap or `PYTHONPATH` override. The installed compiler check,
+live impossible/nullable/declared-object probes and a streamed named-tool probe
+passed. The latter returned the exact permitted arguments despite an adversarial
+request for forbidden values, with `tool_calls` finish and positive usage.
+Native request-level `custom_params.thinking_budget` was verified in source and
+in the measured reasoning counts; no additional serving adapter is necessary.
+
+The refreshed tests ran from `fad000beecb93a2e307e81f05b040cc4539a17f2`;
+the separately added `probe_brief_grounded.py` is retained with the artifacts.
+All requests and responses are synthetic. The original prompts and schema were
+preserved. The audit additionally checks the long prompts' six-to-eight blocks,
+two interpretation blocks referencing both source IDs, and exactly two followups.
+These requirements are in prose, not all enforced by the original schema.
+
+### Original handoff and controlled long-answer comparison
+
+The original six cases, five repeats each, returned **30/30 schema-valid
+responses**, **27/30 under the legacy minimum-block gate**, and **25/30 under
+the fuller prose-obligation audit**. A/B/C/E passed 5/5 each; D passed 4/5 and F
+1/5 under the fuller audit. The original requests retained `max_tokens=7000`.
+The earlier 29/30 result was a different stochastic run under the weaker gate;
+it is not comparable to 25/30 as a serving regression measurement.
+
+Manual review matters: the original fixture names sources without supplying
+their measurements or study findings. Two short F answers correctly declined
+to infer missing information; they fail the requested length but are appropriate
+limitations. Another promised six readings without providing them. Two invented
+study findings or advice, including the F answer that passed the block audit.
+Neither schema validity nor a block count is an accuracy score.
+
+The following 40-request experiment used the unchanged original tool schema,
+`max_tokens=12000`, temperature .6, top-p .95, top-k 20, five repeats per condition,
+with rotated/reversed condition order. Complete sources add six synthetic
+measurements and an explicitly synthetic observational study. "Policy" adds the
+test-only grounding instructions, never a server-injected health policy.
+
+| Source content | Test policy | Thinking maximum | Prose checks | Mean request time |
+|---|---|---:|---:|---:|
+| Source names only | Off | Default 4,096 | 3/5 | 18.98 s |
+| Complete | Off | Default 4,096 | 5/5 | 14.19 s |
+| Source names only | On | Default 4,096 | 1/5 | 17.60 s |
+| Complete | On | Default 4,096 | 5/5 | 14.89 s |
+| Source names only | Off | 8,192 | 5/5 | 26.48 s |
+| Complete | On | 8,192 | 5/5 | 16.93 s |
+| Complete | On | 512 | 4/5 | 4.58 s |
+| Complete | On | Thinking off | 3/5 | 3.93 s |
+
+All 40 requests ended in a named tool call. More thinking with missing sources
+produced more complete-looking but unsupported answers. Complete sources alone
+still permitted unsupported grading and priority ranking. In the complete-source
+plus policy answers, manual review found no invented measurements, clinical
+thresholds or intervention benefits at default or 8,192; residual issues included
+repeated limitations and source-derived conclusions labeled as general claims.
+At 512, one answer returned only the personal measurements and omitted the
+literature synthesis. With thinking off, one answer called variability "large"
+without a supplied comparator; others exceeded the requested block count.
+Increasing the budget is not a substitute for missing evidence, and disabling
+thinking is not an accepted general solution.
+
+### Separately labeled concise-answer diagnostic
+
+`probe_brief_grounded.py` keeps the same tool schema, complete sources and policy
+but requests two-to-four text blocks, at most one followup, and at most 150 words
+across displayed claims and followups. It is an additional diagnostic, not a
+replacement for the failing original long cases. Five repeats per budget were
+counterbalanced, with the same 12,000-token output allowance and sampling.
+
+| Thinking maximum | Format and length | Mean request time | Mean displayed words | Word range |
+|---|---:|---:|---:|---:|
+| Default 4,096 | 5/5 | 10.15 s | 121.6 | 110–130 |
+| 512 | 5/5 | 2.77 s | 115.0 | 97–132 |
+
+That is a **72.7% reduction in mean waiting time** within this concise fixture.
+All ten final answers were manually compared with the supplied synthetic sources:
+none invented measurements, clinical cutoffs, comparative priority rankings or
+individual intervention benefits. Both the measurements and observational-study
+limits remained present. Minor wording issues remain: "cited study" sometimes
+appears despite this synthetic fixture having no publication/citation identifiers,
+and some coverage limitations recur. This ten-answer, in-sample check does not
+establish general clinical quality or prove that a 512 budget works on other tasks.
+
+### Speed, startup, artifacts and cleanup
+
+Five fresh sustained essays measured 202.0 / 197.6 / 201.1 / 206.0 / 195.6 decode
+tokens/sec: median **201.1**, versus the earlier baseline 200.1. First-token
+latency was .05–.08 s on pod loopback. These naturally completed essays have
+different lengths; the near-equal rate demonstrates no material observed
+regression, not a compiler-caused speedup. Most of the concise response-time
+improvement above comes from less reasoning/output work, not faster raw decoding.
+
+Server launch to first healthy response took 288.55 seconds, including model,
+kernel and CUDA graph initialization. Image extraction and download preceded
+that interval. GPU allocation was 125,494 MiB and whole-pod host-memory peak
+39.16 GiB. This remains a 251 GiB RunPod host experiment; it does not prove that
+Tinfoil image extraction will fit 64 GiB or establish full-context concurrency.
+
+An initial setup command referenced a fixture at the wrong local path and stopped
+before inference. It was corrected to use the image's installed compiler check;
+both the failed setup log and the successful rerun are retained. No runtime image
+or model change was needed for that test-invocation correction.
+
+Full synthetic results, exact request/response bodies, execution logs, launch
+configuration and stream probe were downloaded and hash-verified before deletion:
+archive SHA256 `d7bd0ba23f5fd96853bebb2a509f06bf5064ae52bf350ddee9c0500da1627b30`.
+The owned pod was deleted at **14:58:36 UTC**, verified absent, and its cleanup
+watchdog exited. No RunPod pods or persistent volumes were left by this task.
+This session lasted 40.16 minutes at $4.59/hour, approximately **$3.07** in listed
+compute-rate time, not a reconciled invoice. Credentials remain in Keychain.
+
+### Resulting implementation boundary
+
+The model-serving candidate now has immutable-image GPU boot, compiler enforcement
+and throughput evidence. Keep the generic server generic and retain native
+DFlash2 and per-request budget control. The next application change should provide
+the actual selected evidence once, carry its applicability and identifiers into
+the answer, request length appropriate to the question, and reserve sufficient
+reasoning for complex synthesis. Evaluate a concise/512 profile as a bounded
+option alongside the default; do not infer an automatic routing policy from these
+five repeated examples. Audit source-grounded conclusions separately from schema
+and length checks. No output rewriting, regex filter or extra model repair round
+was added in this serving work.
+
+The application 20-question battery, database recall, production load and Tinfoil
+release acceptance remain untested by this experiment. PR #5 stays draft and the
+broader issue stays open. The failing original cases and remaining provenance
+precision prevent calling the model or application perfect or production-accepted.
