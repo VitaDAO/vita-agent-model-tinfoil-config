@@ -78,11 +78,11 @@ Initial balanced candidate run:
 
 All 64 exact-answer checks, completion checks and explicit budget checks passed. The 16 open summaries were 115–153 words, within the requested 100–160 words. Manual review nevertheless found unsupported variability adjectives at budgets 32 and 512, and occasional advice extending beyond the supplied association. The run is **not 80/80 factual accuracy**. A lower cap reduces waiting on easy prompts; it does not establish safe evidence synthesis or predict full application latency.
 
-Long structured-answer probes used the unchanged six-case handoff and five repeats. Baseline passed 28/30 and the initial compiler/mask candidate 29/30 under the original schema/minimum-block gate. Remaining long-tool outputs were one-block acknowledgments. The schema allows fewer blocks than the prompt asks for; structural validity does not enforce all prose instructions. These original sparse-source failures are retained, not replaced with easier fixtures.
+Long structured-answer probes used the unchanged six-case handoff and five repeats. Baseline passed 28/30 and the initial compiler/mask candidate 29/30 under the original schema/minimum-block gate. Remaining long-tool outputs contained only one answer block. The schema allows fewer blocks than the prompt asks for; structural validity does not enforce all prose instructions. These original sparse-source failures are retained, not replaced with easier fixtures.
 
 A separate complete-source fixture supplied six synthetic personal measurements and a synthetic observational study. All ten initial outputs passed the structural/minimum-block gate, but manual review found absent seven-hour thresholds, unsupported ranking and inference from sleep efficiency. Test-only grounding instructions removed much of this. The final example explicitly separates observation from intervention and source-topic coverage from comparative importance.
 
-With that example and default thinking, the first ten long outputs passed the structural/minimum-block checks and manual review found none of the tested unsupported thresholds, grading, intervention or priority-ranking claims. This is a small in-sample result, not a generalized accuracy guarantee. At budget 512, two of five long-tool repeats returned one-block acknowledgments; some other answers exceeded the requested upper block count. That cap is not recommended for complex synthesis. The test policy is not injected into production serving; an agent integration would require separate application QA.
+With that example and default thinking, the first ten long outputs passed the structural/minimum-block checks and manual review found none of the tested unsupported thresholds, grading, intervention or priority-ranking claims. This is a small in-sample result, not a generalized accuracy guarantee. At budget 512, two of five long-tool repeats returned only one answer block; some other answers exceeded the requested upper block count. That cap is not recommended for complex synthesis. The test policy is not injected into production serving; an agent integration would require separate application QA.
 
 ## Context, memory and resource limits
 
@@ -117,7 +117,7 @@ compiler's strict_mode both false and true.
   median **195.6**, first-token latency .05–.08seconds on pod loopback.
   This is 2.25% below the 200.1 baseline, not a raw decoding speed improvement.
 - Original handoff: **29/30** under its schema/minimum-block gate. All five
-  A–E repetitions passed; F passed 4/5, with one one-block acknowledgment.
+  A–E repetitions passed; F passed 4/5, with one one-block answer.
   The original acceptance failure remains open.
 - Complete-source/default-thinking/policy repeat: **10/10** structural and
   minimum-block checks; all 10 had 7–8 blocks and two followups. Manual review
