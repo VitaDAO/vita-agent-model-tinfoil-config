@@ -17,7 +17,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "5b4e9ce9e72524037ae24ecd831b9b6604d2eb48"
-VERSION = "0.2.1+vita3"
+VERSION = "0.2.1+vita4"
 
 
 def run(*args, cwd=None):

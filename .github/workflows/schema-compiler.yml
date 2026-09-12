@@ -1,4 +1,4 @@
-name: Verify and build Fable schema compiler
+name: Verify and build Fable serving runtime
 
 on:
   pull_request:
@@ -7,6 +7,7 @@ on:
       - docker/schema-compiler/**
       - scripts/build_schema_compiler.py
       - scripts/install_response_contract.py
+      - bench_enclave.py
       - tests/**
       - .github/workflows/schema-compiler.yml
   workflow_dispatch:
@@ -38,6 +39,10 @@ jobs:
             --output "$RUNNER_TEMP/serving_chat.py"
           python scripts/install_response_contract.py --source "$RUNNER_TEMP/serving_chat.py"
           python tests/serving/test_response_contract.py "$RUNNER_TEMP/serving_chat.py"
+      - name: Verify benchmark failure handling
+        run: |
+          python tests/serving/test_benchmark_stream.py
+          python tests/serving/test_probe_tool_envelope.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: compiler-build-manifest

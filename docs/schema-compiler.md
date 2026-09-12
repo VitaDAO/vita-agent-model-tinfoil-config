@@ -56,7 +56,10 @@ omits the correction and intentionally fails the regression tests.
 `docker/schema-compiler/xgrammar-0.2.1.patch` changes the pinned upstream source;
 `schema_conjunction.h` contains its conjunction support. This is a build-time
 source change, not a runtime output-repair path. The build manifest records both
-file hashes. The resulting package version is `0.2.1+vita3`.
+file hashes. The resulting package version is `0.2.1+vita4`. The September 12 correction also
+rejects closed objects whose required property has no allowed declaration, while
+preserving an independently valid null alternative. See
+[the RunPod evaluation](runpod-serving-benchmark-2026-09-12.md) for current evidence.
 
 ## Candidate image and remaining release gates
 
@@ -68,6 +71,15 @@ It also applies the hash-checked rendering correction to pinned SGLang source
 and runs the rendering tests against that installed source. Model packages remain unchanged. The configuration additionally enables native
 strict thinking and a 4,096-token reasoning budget, as documented below. These installed-image checks require a Linux image
 build; local C++ tests do not substitute for them.
+
+At the September 12 release-preparation check, the live release was `v0.10.1`: serving image
+`sha256:47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`, built from
+`9ebdc612db3fd351457dbe96991bf9e331f31ace` with compiler `0.2.1+vita3` and attested
+as `8ff0ca151438710252055cb5a7b8b3cd242b6749564006fb09143c9fc2704788`. The proposed
+`v0.10.2` release pins
+`sha256:2fd6c1db75a33fe55a491e09930a87118aa39cc402b67cfe6281028c88d6c719`, built from
+`879a16a3fced261856c08cbf5be0dc57daf9dfa2` with compiler `0.2.1+vita4`. `v0.10.1`
+remains the rollback target. Live deployment evidence is recorded in [issue #3](https://github.com/VitaDAO/vita-agent-model-tinfoil-config/issues/3).
 
 The dedicated workflow runs native checks on a PR. Image publication is manual
 and emits an immutable digest; it has no deploy action. GitHub requires a new
@@ -87,9 +99,9 @@ Before release:
    remain within 10%; report first-token and total latency separately. Local
    compiler timings are not inference-speed evidence.
 6. Record the principal's release authorization, pin/attest the
-   tested digest, select the new tag with Tinfoil CLI, then verify attestation,
-   health, and synthetic smokes. Retain `v0.10.0` as a recovery artifact; it is
-   stopped by principal direction and must not be restarted automatically.
+   tested digest, select the proposed `v0.10.2` tag with the Tinfoil CLI, then verify
+   attestation, health, and synthetic smokes. Retain `v0.10.1` as the rollback
+   target and execute recovery only under the recorded release recovery plan.
 
 Production promotion is proven by the recorded live attestation and synthetic smoke,
 not a source commit. Clients that do not request strict decoding must opt in to use
@@ -102,7 +114,7 @@ A `compiler-build-*` tag can explicitly build an immutable candidate from a revi
 
 Conjunctions that contain both resource identifiers (`$id`/`$anchor`) and references are rejected, including identifiers in unused definitions. The pinned resolver has no resource-scope stack; attempting to exempt apparently unrelated identifiers admitted incorrect values through reachable definitions. This conservative rejection is intentional until resource-aware resolution is implemented separately. Ordinary references without resource identifiers and identifier-bearing finite values remain supported. The original Vita answer contract contains no resource identifiers, so this boundary does not restrict its acceptance cases.
 
-Review disposition: the request to accept unused identifier/reference combinations is deferred as a compatibility extension. Reverting that extension fixes the demonstrated invalid-value acceptance. The current image source is `9ebdc612db3fd351457dbe96991bf9e331f31ace`; subsequent configuration/documentation commits preserve that image identity.
+Review disposition: the request to accept unused identifier/reference combinations is deferred as a compatibility extension. Reverting that extension fixes the demonstrated invalid-value acceptance. That correction is carried by the live `v0.10.1` image `47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`, built from `9ebdc612db3fd351457dbe96991bf9e331f31ace`; the proposed `v0.10.2` image `2fd6c1db75a33fe55a491e09930a87118aa39cc402b67cfe6281028c88d6c719` retains it and was built from `879a16a3fced261856c08cbf5be0dc57daf9dfa2`.
 
 ### Earlier compiler and renderer diagnostics on September 11
 

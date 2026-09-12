@@ -1,0 +1,57 @@
+{
+  "test_only": "All people, measurements and research below are synthetic software-test fixtures.",
+  "source_1": {
+    "kind": "personal_health_read",
+    "findings": [
+      {
+        "finding_id": "series:0",
+        "metric": "mean_sleep_duration",
+        "value": 360,
+        "unit": "min/night",
+        "readings": 14
+      },
+      {
+        "finding_id": "series:1",
+        "metric": "bedtime_standard_deviation",
+        "value": 95,
+        "unit": "min",
+        "readings": 14
+      },
+      {
+        "finding_id": "series:2",
+        "metric": "wake_time_standard_deviation",
+        "value": 80,
+        "unit": "min",
+        "readings": 14
+      },
+      {
+        "finding_id": "series:3",
+        "metric": "mean_resting_heart_rate",
+        "value": 62,
+        "unit": "bpm",
+        "readings": 14
+      },
+      {
+        "finding_id": "series:4",
+        "metric": "mean_daily_steps",
+        "value": 6000,
+        "unit": "steps/day",
+        "readings": 14
+      },
+      {
+        "finding_id": "series:5",
+        "metric": "sleep_efficiency",
+        "value": 89,
+        "unit": "%",
+        "readings": 14
+      }
+    ],
+    "coverage": "Same synthetic adult, same device, same fourteen-day window. No historical baseline or diagnosis."
+  },
+  "source_2": {
+    "kind": "literature_read",
+    "citation_ids": [],
+    "passage_choices": [],
+    "content": "Synthetic research fixture, not a real publication: observational study of 60 adults aged 18-65 over 4 weeks. Greater variation in bed and wake times was associated with less favorable cardiometabolic markers. It did not test interventions, establish causation, prescribe treatment, or classify any individual. Sleep consistency is a hypothesis worth tracking alongside sufficient sleep opportunity, not a demonstrated individual treatment effect."
+  }
+}
