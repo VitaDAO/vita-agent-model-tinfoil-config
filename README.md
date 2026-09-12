@@ -10,8 +10,8 @@ not the active release configuration.
 
 - Target: `alexdobrin/Qwen3.8-27B-Fable-Distill-FP8@dad2544d418ffb797af211fb49e4dd770af8e33f`
 - Draft: `incoai/Qwen3.8-27B-DFlash2@dedf8df68adfb1afeaf7b7480c0a0243108177b4`
-- Serving image: `ghcr.io/vitadao/vita-agent-model-sglang@sha256:47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`
-- Image source: `9ebdc612db3fd351457dbe96991bf9e331f31ace`
+- Rollback release `v0.10.1` (verified live before this release; attested digest `8ff0ca151438710252055cb5a7b8b3cd242b6749564006fb09143c9fc2704788`): serving image `ghcr.io/vitadao/vita-agent-model-sglang@sha256:47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`, built from `9ebdc612db3fd351457dbe96991bf9e331f31ace` with compiler `0.2.1+vita3`.
+- Configured release `v0.10.2` (deployment evidence is tracked in [issue #3](https://github.com/VitaDAO/vita-agent-model-tinfoil-config/issues/3)): serving image `ghcr.io/vitadao/vita-agent-model-sglang@sha256:2fd6c1db75a33fe55a491e09930a87118aa39cc402b67cfe6281028c88d6c719`, built from `879a16a3fced261856c08cbf5be0dc57daf9dfa2` with compiler `0.2.1+vita4`. This is the digest this release pins in `tinfoil-config.yml`; `v0.10.1` remains the rollback target.
 - API model ID: `fable-distill`; context: 262,144 tokens; concurrency: 16 slots.
 - Host allocation: eight CPUs, one H200, 128 GiB RAM; confidential computing on.
 
@@ -55,6 +55,6 @@ The proxy verifies the enclave's attestation before forwarding requests. Keep
 certificate and attestation verification enabled. See [USAGE.md](USAGE.md) for
 request-level reasoning budgets and the distinction from older measurements.
 
-The old `v0.10.0` release is retained for recovery, but must not be automatically
-restarted against the principal's explicit direction to replace it. Recovery
-must use a recorded, authorized action for the intended production container.
+Retain `v0.10.1` as the recovery target for `v0.10.2`. Rollback must follow the
+recorded release recovery plan for the intended production container; the older
+`v0.10.0` release is not the rollback target.

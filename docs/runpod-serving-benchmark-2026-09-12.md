@@ -14,12 +14,12 @@ This is a model-serving evaluation using synthetic fixtures. It is not the appli
 
 - Source base: `8db8761084bd5262e8960042f25983d179b4c781`.
 - Final runtime/build source: `879a16a3fced261856c08cbf5be0dc57daf9dfa2`; later test/report revisions do not change runtime inputs.
-- Baseline serving image: `ghcr.io/vitadao/vita-agent-model-sglang@sha256:47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`.
+- Baseline serving image, which is the live `v0.10.1` serving image: `ghcr.io/vitadao/vita-agent-model-sglang@sha256:47403a0af08f629a55fd65695bb250f378e9938c358b795ae50c1c38ad9cfe08`.
 - SGLang: `db272201a2dbd72e5699e443240a851f1313ad45`.
 - Target: `alexdobrin/Qwen3.8-27B-Fable-Distill-FP8@dad2544d418ffb797af211fb49e4dd770af8e33f`.
 - Draft: `incoai/Qwen3.8-27B-DFlash2@dedf8df68adfb1afeaf7b7480c0a0243108177b4`.
-- Compiler baseline `0.2.1+vita3`; candidate `0.2.1+vita4`. GPU-tested wheel SHA256 `a92cbf3065b9fbed01a8a946e2fee7cda331440a23676735b4e6f1f02747aef8`.
-- One RunPod Secure Cloud H200, 143,771 MiB GPU memory, driver 580.178.04, CUDA 13, 16 vCPU, approximately 251 GiB host RAM. GPU observations: 1,980 MHz SM, 3,201 MHz memory.
+- Compiler baseline `0.2.1+vita3`; candidate `0.2.1+vita4`. The first session's pre-image GPU experiment used a separate local build of the candidate, wheel SHA256 `a92cbf3065b9fbed01a8a946e2fee7cda331440a23676735b4e6f1f02747aef8`. The immutable-image candidate embeds a distinct build of the same pinned source, `xgrammar-0.2.1+vita4-cp312-cp312-linux_x86_64.whl` SHA256 `f4873dda1e0493c4c4b1f62546639a975f4f1a9c7e1c48d69e2971d006d33f9a`; see the final section. Wheel bytes are not reproducible across builds, and the two wheels carry the same source inputs. Model weights are unchanged.
+- One RunPod Secure Cloud H200, 143,771 MiB GPU memory, driver 580.178.04, CUDA 13, 16 vCPU, host RAM advertised as 251 GB (cgroup `memory.max` 250,999,996,416 bytes, about 233.8 GiB). GPU observations: 1,980 MHz SM, 3,201 MHz memory.
 - FA3; page size 64; static memory fraction .85; context 262,144; chunked prefill 4,096; Mamba `extra_buffer`, ratio .2, SSM bfloat16; requested concurrency 16, runtime cache allocation capped effective running requests at 14; CUDA graph decode maximum 16.
 - Inference bound to pod loopback. Benchmarks below use a client on that pod. SSH-tunnel runs are retained separately because their network latency is not comparable.
 - No real personal/health data; no public inference listener. Credentials were not committed or placed in result files.
@@ -92,7 +92,7 @@ This is in-context retrieval, not database recall, conversation indexing, tenant
 
 ## Remaining delivery boundaries
 
-The compiler correction is source- and GPU-tested. The final immutable image, compiler-only repeat results and paid-pod cleanup are recorded below. No production environment was selected or redeployed. The canonical issue remains open for the unresolved general instruction-following and application acceptance scope.
+The compiler correction is source- and GPU-tested. The final immutable image, compiler-only repeat results and paid-pod cleanup are recorded below. At the end of these experiments, no production environment had been selected or redeployed: the live release remained `v0.10.1` (attested digest `8ff0ca151438710252055cb5a7b8b3cd242b6749564006fb09143c9fc2704788`), the candidate was prepared for `v0.10.2` but had not been deployed, and `v0.10.1` was selected as its rollback target. Later deployment evidence is tracked in issue #3. The canonical issue remains open for the unresolved general instruction-following and application acceptance scope.
 
 Reproduce the local checks with the pinned environment described in `schema-compiler.md`. Against an isolated authenticated test endpoint, run `probe_object_closure.py`, the original `probe_constrained.py` with `CASES=ABCDEF RUNS=5`, the separately labeled complete-source/policy probes, `benchmark_profiles.py --repeats 4`, and `benchmark_fixed_load.py`. Use synthetic inputs, preserve raw outputs for manual review, and shut down paid infrastructure after the bounded evaluation.
 
@@ -106,6 +106,13 @@ Built from `879a16a3fced261856c08cbf5be0dc57daf9dfa2` in successful workflow
 Native PR checks also passed in run 34693469203. The earlier experimental image
 `c1cbe0f1aa6ad658229327db88f32ac2d6f15df5e1cef31e3cb7b71e7302d178`
 contains the removed mask experiment and is not the recommended image.
+
+The immutable image embeds `xgrammar-0.2.1+vita4-cp312-cp312-linux_x86_64.whl`,
+SHA256 `f4873dda1e0493c4c4b1f62546639a975f4f1a9c7e1c48d69e2971d006d33f9a`, 45,881,371
+bytes. It is a separate build from the pre-image experiment wheel `a92cbf30…`, and
+both record the same source inputs: `upstream_revision 5b4e9ce9…`,
+`patch_sha256 c0fbed69…` and `header_sha256 d10113ae…` in the image's
+`compiler-build.json`. No model weights changed.
 
 Final RunPod runtime: compiler 0.2.1+vita4, SGLang 0.0.0.dev1+gdb272201a,
 PyTorch 2.13.0+cu130, Transformers 5.12.1. All four SGLang mask-source hashes were
@@ -261,8 +268,9 @@ improvement above comes from less reasoning/output work, not faster raw decoding
 Server launch to first healthy response took 288.55 seconds, including model,
 kernel and CUDA graph initialization. Image extraction and download preceded
 that interval. GPU allocation was 125,494 MiB and whole-pod host-memory peak
-39.16 GiB. This remains a 251 GiB RunPod host experiment; it does not prove that
-Tinfoil image extraction will fit 64 GiB or establish full-context concurrency.
+39.16 GiB. This remains a RunPod host experiment with the advertised 251 GB host
+RAM (cgroup `memory.max` 250,999,996,416 bytes, about 233.8 GiB); it does not prove
+that Tinfoil image extraction will fit 64 GiB or establish full-context concurrency.
 
 An initial setup command referenced a fixture at the wrong local path and stopped
 before inference. It was corrected to use the image's installed compiler check;
