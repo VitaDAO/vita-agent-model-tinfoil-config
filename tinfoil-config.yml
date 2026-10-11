@@ -21,7 +21,6 @@ containers:
     image: ghcr.io/vitadao/vita-agent-model-sglang@sha256:2fd6c1db75a33fe55a491e09930a87118aa39cc402b67cfe6281028c88d6c719
     runtime: nvidia
     gpus: all
-    ipc: host
     restart: always
     env:
       - HF_HUB_OFFLINE: '1'
@@ -84,7 +83,9 @@ containers:
       - --log-level
       - warning
       - --host
-      - 127.0.0.1
+      # cvm 0.14: the shim reaches the container over the shim-net bridge, not loopback.
+      # Egress stays closed (no networks block), so this is not internet-exposed.
+      - 0.0.0.0
       - --port
       - '8080'
     healthcheck:
