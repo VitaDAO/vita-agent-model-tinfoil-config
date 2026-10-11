@@ -1,6 +1,6 @@
 # Fable Distill FP8 + DFlash2 on one confidential H200.
 # Target weights unchanged; the draft model proposes tokens for Fable to verify.
-cvm-version: 0.7.5
+cvm-version: 0.14.10
 cpus: 8
 # Diskless enclave: host RAM holds both model packages and the runtime image.
 # Keep 128 GiB; cold-start fit of this candidate must be verified on deployment.
