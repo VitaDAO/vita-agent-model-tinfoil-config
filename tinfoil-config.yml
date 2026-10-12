@@ -19,6 +19,8 @@ models:
 containers:
   - name: sglang
     image: ghcr.io/vitadao/vita-agent-model-sglang@sha256:2fd6c1db75a33fe55a491e09930a87118aa39cc402b67cfe6281028c88d6c719
+    # cvm 0.14 defaults to a read-only rootfs; sglang/triton/torch compile write caches (HOME, /tmp, ~/.cache).
+    read_only: false
     runtime: nvidia
     gpus: all
     restart: always
