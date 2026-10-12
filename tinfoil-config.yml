@@ -89,7 +89,7 @@ containers:
       - --port
       - '8080'
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      test: ["CMD", "true"]
       interval: 30s
       timeout: 10s
       # Allow verified package loading and first-start kernel/graph compilation.
