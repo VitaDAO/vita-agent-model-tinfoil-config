@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
 
-      - uses: tinfoilsh/pri-build-action@5d450a7f30904866efc401e24484b935b7ed52dd  # v0.6.1
+      - uses: tinfoilsh/pri-build-action@768ada355b32b301839c983409304dc53bcc03ff  # v0.13.1 - matches cvm 0.14.10 (same pin as aubrai-harness-prod); mark-as-latest defaults to false
         with:
           config-file: ${{ github.workspace }}/tinfoil-config.yml
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -25,4 +25,3 @@ jobs:
           # GitHub's /releases/latest endpoint, which skips prereleases. A
           # prerelease-only repo causes atc to return HTTP 500 "Failed to build
           # attestation bundle" and the browser SecureClient init throws.
-          prerelease: "false"
